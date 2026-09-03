@@ -12,6 +12,7 @@ import { useCafeteria } from '@/hooks/use-cafeteria';
 export function AdminDashboard() {
   const { state, connected } = useCafeteria();
   const [user, setUser] = useState<User | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [authReady, setAuthReady] = useState(!isFirebaseConfigured);
   const [message, setMessage] = useState('');
   const [draft, setDraft] = useState<CafeteriaState>(state);
@@ -19,7 +20,23 @@ export function AdminDashboard() {
   useEffect(() => setDraft(state), [state]);
   useEffect(() => {
     if (!auth) return;
-    return onAuthStateChanged(auth, (nextUser) => { setUser(nextUser); setAuthReady(true); });
+    return onAuthStateChanged(auth, async (nextUser) => {
+      setUser(nextUser);
+      if (!nextUser) {
+        setIsAdmin(false);
+        setAuthReady(true);
+        return;
+      }
+
+      try {
+        const token = await nextUser.getIdTokenResult(true);
+        setIsAdmin(token.claims.admin === true);
+      } catch {
+        setIsAdmin(false);
+      } finally {
+        setAuthReady(true);
+      }
+    });
   }, []);
 
   async function login() {
@@ -50,6 +67,21 @@ export function AdminDashboard() {
             {message && <p className="text-sm font-bold text-rose-600" role="alert">{message}</p>}
             <button className="h-11 rounded-xl bg-primary font-extrabold text-primary-foreground transition hover:bg-primary/90" type="button" onClick={login}>Google 계정으로 로그인</button>
           </div>
+        </Card>
+      </main>
+    );
+  }
+
+  if (isFirebaseConfigured && user && !isAdmin) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-background px-5 py-10">
+        <Card className="w-full max-w-md gap-6 p-7 shadow-xl shadow-blue-950/5 sm:p-9">
+          <div>
+            <span className="mb-4 grid size-12 place-items-center rounded-2xl bg-rose-100 text-rose-700"><Settings2 className="size-5" /></span>
+            <h1 className="text-2xl font-black tracking-tight">관리자 권한이 없습니다</h1>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">허용된 관리자 계정으로 다시 로그인해 주세요.</p>
+          </div>
+          <button className="h-11 rounded-xl border bg-white font-extrabold hover:bg-muted" type="button" onClick={() => auth && void signOut(auth)}>다른 계정으로 로그인</button>
         </Card>
       </main>
     );

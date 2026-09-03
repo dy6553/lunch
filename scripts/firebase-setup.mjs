@@ -80,7 +80,19 @@ async function grantAdmin() {
   console.log(`Granted admin claim to ${email}.`);
 }
 
+async function verifyAdmins() {
+  const root = `https://identitytoolkit.googleapis.com/v1/projects/${credential.project_id}`;
+  const result = await request(`${root}/accounts:batchGet?maxResults=1000`);
+  const admins = (result.users ?? [])
+    .filter((user) => {
+      try { return JSON.parse(user.customAttributes ?? '{}').admin === true; }
+      catch { return false; }
+    })
+    .map((user) => user.email ?? user.localId);
+  console.log(`Administrators (${admins.length}): ${admins.join(', ') || 'none'}`);
+}
+
 if (command === 'seed') await seed();
 else if (command === 'grant-admin') await grantAdmin();
+else if (command === 'verify-admins') await verifyAdmins();
 else throw new Error(`Unknown command: ${command}`);
-
