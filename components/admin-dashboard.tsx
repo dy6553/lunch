@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { GoogleAuthProvider, onAuthStateChanged, signInWithRedirect, signOut, type User } from 'firebase/auth';
+import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { ArrowLeft, LogOut, Minus, Plus, RotateCcw, Save, Settings2, Utensils, Wifi } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -42,8 +42,14 @@ export function AdminDashboard() {
   async function login() {
     if (!auth) return;
     setMessage('');
-    try { await signInWithRedirect(auth, new GoogleAuthProvider()); }
-    catch { setMessage('Google 로그인을 완료하지 못했습니다. 다시 시도해 주세요.'); }
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      await signInWithPopup(auth, provider);
+    } catch (error) {
+      const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : 'unknown';
+      setMessage(`Google 로그인 실패 (${code}). 팝업 차단을 해제한 뒤 다시 시도해 주세요.`);
+    }
   }
 
   async function save(next: CafeteriaState, successMessage = '변경사항을 저장했습니다.') {
