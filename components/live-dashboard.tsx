@@ -48,20 +48,20 @@ export function LiveDashboard() {
                 <span className="flex items-center gap-1.5 text-xs font-semibold text-blue-100">{connected || demoMode ? <Wifi className="size-3.5" /> : <WifiOff className="size-3.5" />} {loading ? '연결 중' : connected ? '실시간 연결' : demoMode ? '미리보기' : '재연결 중'}</span>
               </div>
               <div className="mt-8 flex items-end gap-3 sm:mt-10">
-                <strong className="font-heading text-[clamp(6rem,20vw,11rem)] font-black leading-[0.72] tracking-[-0.09em]">{displayedCount}</strong>
-                <span className="pb-1 text-2xl font-extrabold sm:pb-3 sm:text-3xl">명</span>
+                <strong className="font-heading text-[clamp(6rem,20vw,11rem)] font-black leading-[0.72] tracking-[-0.09em]">{loading ? '…' : displayedCount}</strong>
+                {!loading && <span className="pb-1 text-2xl font-extrabold sm:pb-3 sm:text-3xl">명</span>}
               </div>
               <div className="mt-10 border-t border-white/20 pt-6 sm:mt-12">
                 <p className="text-sm font-medium text-blue-100">지금 줄을 서면</p>
-                <div className="mt-1 flex items-center gap-2"><Clock3 className="size-6" /><p className="text-3xl font-black tracking-tight">{waitMinutes ? `약 ${waitMinutes}분` : '바로 이용 가능'}</p><ArrowRight className="ml-auto size-6 opacity-60" /></div>
+                <div className="mt-1 flex items-center gap-2"><Clock3 className="size-6" /><p className="text-3xl font-black tracking-tight">{loading ? '현재 인원 확인 중' : waitMinutes ? `약 ${waitMinutes}분` : '바로 이용 가능'}</p><ArrowRight className="ml-auto size-6 opacity-60" /></div>
               </div>
             </div>
           </Card>
 
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-1">
             <Card className="gap-5 border-border/80 bg-card p-6 shadow-sm">
-              <div className="flex items-start justify-between"><div><p className="text-sm font-bold text-muted-foreground">현재 혼잡도</p><p className={`mt-1 text-2xl font-black tracking-tight ${congestion.color === 'emerald' ? 'text-emerald-600' : congestion.color === 'rose' ? 'text-rose-600' : 'text-amber-600'}`}>{congestion.label}</p></div><span className="rounded-full bg-muted px-3 py-1 text-xs font-extrabold text-muted-foreground">{congestion.short}</span></div>
-              <div className="space-y-2"><div className="h-3 overflow-hidden rounded-full bg-muted"><div className={`h-full rounded-full transition-all duration-700 ${color}`} style={{ width: `${congestion.progress}%` }} /></div><div className="flex justify-between text-[11px] font-semibold text-muted-foreground"><span>여유</span><span>보통</span><span>혼잡</span></div></div>
+              <div className="flex items-start justify-between"><div><p className="text-sm font-bold text-muted-foreground">현재 혼잡도</p><p className={`mt-1 text-2xl font-black tracking-tight ${loading ? 'text-muted-foreground' : congestion.color === 'emerald' ? 'text-emerald-600' : congestion.color === 'rose' ? 'text-rose-600' : 'text-amber-600'}`}>{loading ? '확인 중' : congestion.label}</p></div><span className="rounded-full bg-muted px-3 py-1 text-xs font-extrabold text-muted-foreground">{loading ? '—' : congestion.short}</span></div>
+              <div className="space-y-2"><div className="h-3 overflow-hidden rounded-full bg-muted"><div className={`h-full rounded-full transition-all duration-700 ${color}`} style={{ width: loading ? '0%' : `${congestion.progress}%` }} /></div><div className="flex justify-between text-[11px] font-semibold text-muted-foreground"><span>여유</span><span>보통</span><span>혼잡</span></div></div>
               <p className="text-sm leading-relaxed text-muted-foreground">{displayedCount > 60 ? '현재 줄이 길어요. 조금 뒤에 오면 더 빠르게 이용할 수 있어요.' : displayedCount > 20 ? '줄은 계속 줄어들고 있어요. 조금만 기다리면 더 여유로워집니다.' : '지금 오면 오래 기다리지 않고 이용할 수 있어요.'}</p>
             </Card>
 

@@ -6,7 +6,9 @@ import { demoState, type CafeteriaState } from '@/lib/cafeteria';
 import { db, isFirebaseConfigured } from '@/lib/firebase';
 
 export function useCafeteria() {
-  const [state, setState] = useState<CafeteriaState>(demoState);
+  const [state, setState] = useState<CafeteriaState>(() => isFirebaseConfigured
+    ? { ...demoState, waitingCount: 0, lastSensorAt: null, updatedAt: null }
+    : demoState);
   const [connected, setConnected] = useState(isFirebaseConfigured);
   const [loading, setLoading] = useState(isFirebaseConfigured);
 
