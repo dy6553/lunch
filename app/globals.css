@@ -50,6 +50,9 @@
 
 body {
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  background-image:
+    radial-gradient(circle at 8% 0%, rgb(222 235 255 / 55%), transparent 27rem),
+    radial-gradient(circle at 96% 14%, rgb(255 232 181 / 34%), transparent 24rem);
 }
 
 :root {

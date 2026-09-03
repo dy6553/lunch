@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, Clock3, RefreshCw, ShieldCheck, Utensils, Wifi, WifiOff } from 'lucide-react';
+import { ArrowRight, Clock3, RefreshCw, ShieldCheck, Timer, Utensils, UsersRound, Wifi, WifiOff } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { getCongestion } from '@/lib/cafeteria';
 import { useCafeteria } from '@/hooks/use-cafeteria';
@@ -27,7 +27,7 @@ export function LiveDashboard() {
 
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 pb-8 pt-5 sm:px-8 sm:pt-8">
+      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-5 pb-8 pt-5 sm:px-8 sm:pt-8">
         <header className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="grid size-11 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm"><Utensils className="size-5" strokeWidth={2.5} /></span>
@@ -39,9 +39,9 @@ export function LiveDashboard() {
           </span>
         </header>
 
-        <section className="grid flex-1 items-center gap-5 py-8 lg:grid-cols-[1.4fr_0.8fr] lg:gap-7 lg:py-12">
-          <Card className="relative overflow-hidden border-0 bg-primary p-7 text-primary-foreground shadow-[0_24px_70px_-30px_rgba(33,75,155,0.65)] sm:p-10">
-            <div className="absolute -right-20 -top-20 size-72 rounded-full bg-white/8" /><div className="absolute -bottom-32 right-28 size-64 rounded-full border-[36px] border-white/6" />
+        <section className="grid flex-1 items-center gap-5 py-8 lg:grid-cols-[1.25fr_0.75fr] lg:gap-7 lg:py-12">
+          <Card className="relative overflow-hidden border-0 bg-[linear-gradient(135deg,#0757bd_0%,#0e73dd_56%,#0b5cbc_100%)] p-7 text-primary-foreground shadow-[0_24px_70px_-30px_rgba(33,75,155,0.65)] sm:p-10">
+            <div className="absolute -right-20 -top-20 size-72 rounded-full bg-white/10" /><div className="absolute -bottom-32 right-28 size-64 rounded-full border-[36px] border-white/8" /><div className="absolute bottom-0 left-0 h-1 w-2/5 bg-amber-300" />
             <div className="relative">
               <div className="flex items-center justify-between gap-4">
                 <p className="text-sm font-bold tracking-tight text-blue-100">현재 기다리는 학생</p>
@@ -65,9 +65,13 @@ export function LiveDashboard() {
               <p className="text-sm leading-relaxed text-muted-foreground">{displayedCount > 60 ? '현재 줄이 길어요. 조금 뒤에 오면 더 빠르게 이용할 수 있어요.' : displayedCount > 20 ? '줄은 계속 줄어들고 있어요. 조금만 기다리면 더 여유로워집니다.' : '지금 오면 오래 기다리지 않고 이용할 수 있어요.'}</p>
             </Card>
 
-            <Card className="gap-4 border-border/80 bg-card p-6 shadow-sm">
+            <Card className="gap-5 border-border/80 bg-card p-6 shadow-sm">
               <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-sky-100 text-sky-700"><RefreshCw className="size-4" /></span><div><p className="text-sm font-extrabold">자동 업데이트 중</p><p className="text-xs text-muted-foreground">{now ? `${now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })} 기준` : '실시간 자동 반영'}</p></div></div>
               <div className="rounded-2xl bg-muted/70 p-4"><div className="flex items-center gap-2 text-xs font-bold text-muted-foreground"><ShieldCheck className="size-4 text-emerald-600" /> 카메라 없이 센서로만 측정해요</div></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-2xl border border-border/70 bg-white p-3"><div className="flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground"><Timer className="size-3.5 text-primary" /> 예상 대기</div><p className="mt-1 text-lg font-black tracking-tight">{waitMinutes ? `${waitMinutes}분` : '없음'}</p></div>
+                <div className="rounded-2xl border border-border/70 bg-white p-3"><div className="flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground"><UsersRound className="size-3.5 text-primary" /> 배식 속도</div><p className="mt-1 text-lg font-black tracking-tight">분당 {state.serviceRatePerMinute}명</p></div>
+              </div>
               <a href="/admin" className="inline-flex items-center gap-1.5 text-xs font-bold text-muted-foreground transition-colors hover:text-primary">관리자 화면 <ArrowRight className="size-3.5" /></a>
             </Card>
           </div>
