@@ -1,7 +1,7 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from 'firebase/auth';
+import { useEffect, useState } from 'react';
+import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { ArrowLeft, LogOut, Minus, Plus, RotateCcw, Save, Settings2, Utensils, Wifi } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -13,8 +13,6 @@ export function AdminDashboard() {
   const { state, connected } = useCafeteria();
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(!isFirebaseConfigured);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [draft, setDraft] = useState<CafeteriaState>(state);
 
@@ -24,12 +22,11 @@ export function AdminDashboard() {
     return onAuthStateChanged(auth, (nextUser) => { setUser(nextUser); setAuthReady(true); });
   }, []);
 
-  async function login(event: FormEvent) {
-    event.preventDefault();
+  async function login() {
     if (!auth) return;
     setMessage('');
-    try { await signInWithEmailAndPassword(auth, email, password); }
-    catch { setMessage('이메일 또는 비밀번호를 확인해 주세요.'); }
+    try { await signInWithPopup(auth, new GoogleAuthProvider()); }
+    catch { setMessage('Google 로그인을 완료하지 못했습니다. 다시 시도해 주세요.'); }
   }
 
   async function save(next: CafeteriaState, successMessage = '변경사항을 저장했습니다.') {
@@ -48,13 +45,11 @@ export function AdminDashboard() {
       <main className="grid min-h-screen place-items-center bg-background px-5 py-10">
         <Card className="w-full max-w-md gap-6 p-7 shadow-xl shadow-blue-950/5 sm:p-9">
           <a href="/" className="inline-flex items-center gap-2 text-sm font-bold text-muted-foreground hover:text-primary"><ArrowLeft className="size-4" /> 학생 화면으로</a>
-          <div><span className="mb-4 grid size-12 place-items-center rounded-2xl bg-primary text-primary-foreground"><Settings2 className="size-5" /></span><h1 className="text-2xl font-black tracking-tight">관리자 로그인</h1><p className="mt-2 text-sm leading-relaxed text-muted-foreground">급식실 담당자 계정으로 로그인해 주세요.</p></div>
-          <form className="grid gap-4" onSubmit={login}>
-            <label className="grid gap-1.5 text-sm font-bold">이메일<input className="h-11 rounded-xl border bg-white px-3 font-medium outline-none focus:ring-2 focus:ring-primary/30" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required /></label>
-            <label className="grid gap-1.5 text-sm font-bold">비밀번호<input className="h-11 rounded-xl border bg-white px-3 font-medium outline-none focus:ring-2 focus:ring-primary/30" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required /></label>
+          <div><span className="mb-4 grid size-12 place-items-center rounded-2xl bg-primary text-primary-foreground"><Settings2 className="size-5" /></span><h1 className="text-2xl font-black tracking-tight">관리자 로그인</h1><p className="mt-2 text-sm leading-relaxed text-muted-foreground">허용된 급식실 담당자 Google 계정으로 로그인해 주세요.</p></div>
+          <div className="grid gap-4">
             {message && <p className="text-sm font-bold text-rose-600" role="alert">{message}</p>}
-            <button className="h-11 rounded-xl bg-primary font-extrabold text-primary-foreground transition hover:bg-primary/90" type="submit">로그인</button>
-          </form>
+            <button className="h-11 rounded-xl bg-primary font-extrabold text-primary-foreground transition hover:bg-primary/90" type="button" onClick={login}>Google 계정으로 로그인</button>
+          </div>
         </Card>
       </main>
     );
