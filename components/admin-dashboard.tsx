@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
+import { GoogleAuthProvider, onAuthStateChanged, signInWithRedirect, signOut, type User } from 'firebase/auth';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { ArrowLeft, LogOut, Minus, Plus, RotateCcw, Save, Settings2, Utensils, Wifi } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -25,7 +25,7 @@ export function AdminDashboard() {
   async function login() {
     if (!auth) return;
     setMessage('');
-    try { await signInWithPopup(auth, new GoogleAuthProvider()); }
+    try { await signInWithRedirect(auth, new GoogleAuthProvider()); }
     catch { setMessage('Google 로그인을 완료하지 못했습니다. 다시 시도해 주세요.'); }
   }
 
