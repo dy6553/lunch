@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, Clock3, RefreshCw, ShieldCheck, Timer, Utensils, UsersRound, Wifi, WifiOff } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Clock3, RefreshCw, ShieldCheck, Timer, Utensils, UsersRound, Wifi, WifiOff } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { getCongestion } from '@/lib/cafeteria';
 import { useCafeteria } from '@/hooks/use-cafeteria';
@@ -77,7 +77,15 @@ export function LiveDashboard() {
           </div>
         </section>
 
-        <footer className="flex flex-col gap-2 border-t border-border/70 pt-5 text-xs font-medium text-muted-foreground sm:flex-row sm:items-center sm:justify-between"><p>센서 측정값으로 실제 인원과 조금 다를 수 있어요.</p><p>오늘 급식 운영 {state.serviceStartsAt}–{state.serviceEndsAt}</p></footer>
+        <aside className="mb-5 flex items-start gap-4 rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-4 text-amber-950 shadow-sm sm:items-center sm:px-6">
+          <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-amber-400 text-amber-950"><AlertTriangle className="size-6" strokeWidth={2.5} /></span>
+          <div>
+            <p className="font-heading text-lg font-black tracking-tight sm:text-xl">집계 인원과 예상 대기시간은 실제와 다를 수 있습니다</p>
+            <p className="mt-1 text-sm font-semibold leading-relaxed text-amber-900/80">센서 측정 환경과 배식 속도에 따라 인원 및 시간이 정확하지 않을 수 있으니 참고용으로 확인해 주세요.</p>
+          </div>
+        </aside>
+
+        <footer className="flex flex-col gap-2 border-t border-border/70 pt-5 text-xs font-medium text-muted-foreground sm:flex-row sm:items-center sm:justify-between"><p>표시 정보는 실시간 참고용입니다.</p><p>오늘 급식 운영 {state.serviceStartsAt}–{state.serviceEndsAt}</p></footer>
       </div>
     </main>
   );
