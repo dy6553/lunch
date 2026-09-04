@@ -100,8 +100,34 @@ export function AdminDashboard() {
   async function recognizeMonth() {
     if (!monthImage) { setMessage('먼저 한 달 급식표 사진을 선택해 주세요.'); return; }
     setRecognizingMonth(true);
-    setMessage('한 달 급식표를 읽고 있습니다. 표가 크면 1분 정도 걸릴 수 있습니다.');
+    setMessage('AI로 한 달 급식표를 분석하고 있습니다…');
     try {
+      if (user) {
+        const body = new FormData();
+        body.append('image', monthImage);
+        body.append('month', month);
+        const token = await user.getIdToken();
+        const response = await fetch('/api/extract-monthly-menu', {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}` },
+          body,
+        });
+        if (response.ok) {
+          const result = await response.json() as { menus?: Array<{ date: string; items: string[] }> };
+          const parsed: Record<number, string> = {};
+          for (const menu of result.menus ?? []) {
+            const day = Number(menu.date.slice(-2));
+            if (day >= 1 && day <= daysInMonth(month)) parsed[day] = menu.items.map((item) => item.trim()).filter(Boolean).join('\n');
+          }
+          if (Object.keys(parsed).length) {
+            setMonthMenus(parsed);
+            setMessage(`AI가 ${Object.keys(parsed).length}일의 메뉴를 분석했습니다. 내용을 확인한 뒤 저장해 주세요.`);
+            return;
+          }
+        }
+      }
+
+      setMessage('AI를 사용할 수 없어 기기 내 OCR로 자동 전환합니다…');
       const { createWorker, PSM } = await import('tesseract.js');
       const worker = await createWorker('kor+eng');
       await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK, preserve_interword_spaces: '1' });
@@ -271,7 +297,7 @@ export function AdminDashboard() {
         </Card>
 
         <Card className="mt-5 gap-6 p-7 shadow-sm">
-          <div><h2 className="text-xl font-black tracking-tight">한 달 급식표 일괄 등록</h2><p className="mt-1 text-sm text-muted-foreground">월간 급식표 사진 한 장에서 날짜와 메뉴를 읽어 초안을 만듭니다. 표 모양에 따라 날짜가 잘못 나뉠 수 있으니 저장 전에 확인해 주세요.</p></div>
+          <div><h2 className="text-xl font-black tracking-tight">한 달 급식표 일괄 등록</h2><p className="mt-1 text-sm text-muted-foreground">AI가 월간 급식표의 날짜와 메뉴를 분석합니다. AI를 사용할 수 없으면 기기 내 OCR로 자동 전환하며, 사진은 서버에 저장하지 않습니다.</p></div>
           <div className="grid gap-4 sm:grid-cols-[1fr_1.5fr_auto] sm:items-end">
             <label className="grid gap-2 text-sm font-bold">급식표 월<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="month" value={month} onChange={(event) => { setMonth(event.target.value); setMonthMenus({}); }} /></label>
             <label className="grid cursor-pointer gap-2 rounded-xl border-2 border-dashed border-sky-200 bg-sky-50 px-4 py-3 text-center hover:border-primary"><span className="text-sm font-extrabold">{monthImage ? monthImage.name : '한 달 급식표 사진 선택'}</span><span className="text-xs text-muted-foreground">가급적 표 전체가 반듯하고 선명하게 나오도록 촬영해 주세요.</span><input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setMonthImage(event.target.files?.[0] ?? null)} /></label>
