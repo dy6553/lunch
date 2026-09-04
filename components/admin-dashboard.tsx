@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
-import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { doc, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 import { ArrowLeft, ImageUp, LoaderCircle, LogOut, Minus, Plus, RotateCcw, Save, Settings2, Sparkles, Utensils, Wifi } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { auth, db, isFirebaseConfigured } from '@/lib/firebase';
 import { type CafeteriaState } from '@/lib/cafeteria';
 import { useCafeteria } from '@/hooks/use-cafeteria';
 import { getKoreanDateKey, useDailyMenu } from '@/hooks/use-daily-menu';
+import { cleanOcrText, daysInMonth, parseMonthlyMenu } from '@/lib/monthly-menu';
 
 export function AdminDashboard() {
   const { state, connected } = useCafeteria();
@@ -22,6 +23,10 @@ export function AdminDashboard() {
   const [menuText, setMenuText] = useState('');
   const [menuImage, setMenuImage] = useState<File | null>(null);
   const [recognizing, setRecognizing] = useState(false);
+  const [month, setMonth] = useState(getKoreanDateKey().slice(0, 7));
+  const [monthImage, setMonthImage] = useState<File | null>(null);
+  const [monthMenus, setMonthMenus] = useState<Record<number, string>>({});
+  const [recognizingMonth, setRecognizingMonth] = useState(false);
 
   useEffect(() => setDraft(state), [state]);
   useEffect(() => setMenuText(menu?.menuText ?? ''), [menu]);
@@ -81,11 +86,7 @@ export function AdminDashboard() {
       });
       const result = await worker.recognize(menuImage);
       await worker.terminate();
-      const text = result.data.text
-        .split('\n')
-        .map((line) => line.replace(/^\s*[·•*\-]+\s*/, '').replace(/\s+/g, ' ').trim())
-        .filter((line) => line.length >= 2)
-        .join('\n');
+      const text = cleanOcrText(result.data.text);
       if (!text) throw new Error('사진에서 글자를 찾지 못했습니다. 더 선명한 사진으로 시도해 주세요.');
       setMenuText(text);
       setMessage('사진에서 메뉴를 읽었습니다. 내용을 확인하고 저장해 주세요.');
@@ -94,6 +95,45 @@ export function AdminDashboard() {
     } finally {
       setRecognizing(false);
     }
+  }
+
+  async function recognizeMonth() {
+    if (!monthImage) { setMessage('먼저 한 달 급식표 사진을 선택해 주세요.'); return; }
+    setRecognizingMonth(true);
+    setMessage('한 달 급식표를 읽고 있습니다. 표가 크면 1분 정도 걸릴 수 있습니다.');
+    try {
+      const { createWorker } = await import('tesseract.js');
+      const worker = await createWorker('kor+eng', undefined, {
+        logger: (progress) => {
+          if (progress.status === 'recognizing text') setMessage(`한 달 급식표를 읽는 중입니다… ${Math.round(progress.progress * 100)}%`);
+        },
+      });
+      const result = await worker.recognize(monthImage);
+      await worker.terminate();
+      const parsed = parseMonthlyMenu(result.data.text, month);
+      setMonthMenus(parsed);
+      const count = Object.values(parsed).filter((value) => value.trim()).length;
+      setMessage(`${count}일의 메뉴 초안을 만들었습니다. 날짜별 내용을 확인한 뒤 일괄 저장해 주세요.`);
+    } catch {
+      setMessage('급식표를 읽지 못했습니다. 더 선명하게 촬영하거나 날짜별 메뉴를 직접 입력해 주세요.');
+    } finally {
+      setRecognizingMonth(false);
+    }
+  }
+
+  async function saveMonthMenus() {
+    const entries = Object.entries(monthMenus).filter(([, value]) => value.trim());
+    if (!entries.length) { setMessage('저장할 메뉴가 없습니다.'); return; }
+    if (!db) { setMessage('Firebase 연결 후 메뉴를 저장할 수 있습니다.'); return; }
+    try {
+      const batch = writeBatch(db);
+      for (const [day, value] of entries) {
+        const date = `${month}-${day.padStart(2, '0')}`;
+        batch.set(doc(db, 'menus', date), { date, menuText: value.trim(), updatedAt: serverTimestamp() });
+      }
+      await batch.commit();
+      setMessage(`${month}의 메뉴 ${entries.length}일치를 한 번에 저장했습니다.`);
+    } catch { setMessage('한 달 메뉴를 저장하지 못했습니다. Firebase 권한을 확인해 주세요.'); }
   }
 
   async function saveMenu() {
@@ -186,6 +226,23 @@ export function AdminDashboard() {
               <button type="button" onClick={saveMenu} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-primary px-5 text-sm font-extrabold text-primary-foreground hover:bg-primary/90"><Save className="size-4" /> {menuDate} 메뉴 저장</button>
             </div>
           </div>
+        </Card>
+
+        <Card className="mt-5 gap-6 p-7 shadow-sm">
+          <div><h2 className="text-xl font-black tracking-tight">한 달 급식표 일괄 등록</h2><p className="mt-1 text-sm text-muted-foreground">월간 급식표 사진 한 장에서 날짜와 메뉴를 읽어 초안을 만듭니다. 표 모양에 따라 날짜가 잘못 나뉠 수 있으니 저장 전에 확인해 주세요.</p></div>
+          <div className="grid gap-4 sm:grid-cols-[1fr_1.5fr_auto] sm:items-end">
+            <label className="grid gap-2 text-sm font-bold">급식표 월<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="month" value={month} onChange={(event) => { setMonth(event.target.value); setMonthMenus({}); }} /></label>
+            <label className="grid cursor-pointer gap-2 rounded-xl border-2 border-dashed border-sky-200 bg-sky-50 px-4 py-3 text-center hover:border-primary"><span className="text-sm font-extrabold">{monthImage ? monthImage.name : '한 달 급식표 사진 선택'}</span><span className="text-xs text-muted-foreground">가급적 표 전체가 반듯하고 선명하게 나오도록 촬영해 주세요.</span><input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setMonthImage(event.target.files?.[0] ?? null)} /></label>
+            <button type="button" disabled={!monthImage || recognizingMonth} onClick={recognizeMonth} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-sky-600 px-5 text-sm font-extrabold text-white hover:bg-sky-700 disabled:opacity-50">{recognizingMonth ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}{recognizingMonth ? '분석 중…' : '한 달치 읽기'}</button>
+          </div>
+          <div className="grid max-h-[36rem] gap-3 overflow-y-auto rounded-2xl border bg-muted/30 p-3 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: daysInMonth(month) }, (_, index) => index + 1).map((day) => {
+              const date = new Date(`${month}-${String(day).padStart(2, '0')}T12:00:00+09:00`);
+              const weekend = [0, 6].includes(date.getDay());
+              return <label key={day} className={`grid gap-2 rounded-xl border bg-white p-3 ${weekend ? 'opacity-60' : ''}`}><span className="text-sm font-black">{day}일 <span className="text-xs text-muted-foreground">({date.toLocaleDateString('ko-KR', { weekday: 'short', timeZone: 'Asia/Seoul' })})</span></span><textarea className="min-h-28 resize-y rounded-lg border p-3 text-sm font-semibold leading-relaxed outline-none focus:ring-2 focus:ring-primary/30" value={monthMenus[day] ?? ''} onChange={(event) => setMonthMenus((current) => ({ ...current, [day]: event.target.value }))} placeholder={weekend ? '급식 없음' : '인식 후 확인하거나 직접 입력'} maxLength={2000} /></label>;
+            })}
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs font-semibold text-muted-foreground">내용이 있는 날짜만 저장하며, 이미 등록된 같은 날짜 메뉴는 새 내용으로 바뀝니다.</p><button type="button" onClick={saveMonthMenus} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-primary px-6 text-sm font-extrabold text-primary-foreground hover:bg-primary/90"><Save className="size-4" /> 한 달 메뉴 일괄 저장</button></div>
         </Card>
       </div>
     </main>
