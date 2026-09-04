@@ -102,8 +102,9 @@ export function AdminDashboard() {
     setRecognizingMonth(true);
     setMessage('한 달 급식표를 읽고 있습니다. 표가 크면 1분 정도 걸릴 수 있습니다.');
     try {
-      const { createWorker } = await import('tesseract.js');
+      const { createWorker, PSM } = await import('tesseract.js');
       const worker = await createWorker('kor+eng');
+      await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK, preserve_interword_spaces: '1' });
       const bitmap = await createImageBitmap(monthImage);
       const weeks = calendarWeekCount(month);
       const cellWidth = bitmap.width / 5;
@@ -136,8 +137,19 @@ export function AdminDashboard() {
           canvas.height,
         );
         const result = await worker.recognize(canvas);
-        const menu = cleanMenuCell(result.data.text);
-        if (menu) parsed[day] = menu;
+        let menu = cleanMenuCell(result.data.text);
+        if (!menu) {
+          context.filter = 'none';
+          context.fillStyle = '#ffffff';
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          context.drawImage(bitmap, column * cellWidth + 3, row * cellHeight + cellHeight * 0.06, cellWidth - 6, cellHeight * 0.92, 0, 0, canvas.width, canvas.height);
+          const retry = await worker.recognize(canvas);
+          menu = cleanMenuCell(retry.data.text);
+        }
+        if (menu) {
+          parsed[day] = menu;
+          setMonthMenus({ ...parsed });
+        }
       }
       bitmap.close();
       await worker.terminate();
