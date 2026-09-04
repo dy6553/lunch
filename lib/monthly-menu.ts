@@ -50,6 +50,12 @@ export function cleanMenuCell(text: string) {
     .join('\n');
 }
 
+export function ocrResultScore(text: string, confidence: number) {
+  const koreanCharacters = (text.match(/[가-힣]/g) ?? []).length;
+  const usefulLines = cleanMenuCell(text).split('\n').filter(Boolean).length;
+  return confidence + Math.min(koreanCharacters, 100) * 0.18 + Math.min(usefulLines, 8) * 1.5;
+}
+
 export function weekdayCellForDay(yearMonth: string, day: number) {
   const [year, month] = yearMonth.split('-').map(Number);
   const first = new Date(year, month - 1, 1);

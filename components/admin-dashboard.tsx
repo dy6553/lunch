@@ -9,7 +9,7 @@ import { auth, db, isFirebaseConfigured } from '@/lib/firebase';
 import { type CafeteriaState } from '@/lib/cafeteria';
 import { useCafeteria } from '@/hooks/use-cafeteria';
 import { getKoreanDateKey, useDailyMenu } from '@/hooks/use-daily-menu';
-import { calendarWeekCount, cleanMenuCell, cleanOcrText, daysInMonth, weekdayCellForDay } from '@/lib/monthly-menu';
+import { calendarWeekCount, cleanMenuCell, cleanOcrText, daysInMonth, ocrResultScore, weekdayCellForDay } from '@/lib/monthly-menu';
 
 export function AdminDashboard() {
   const { state, connected } = useCafeteria();
@@ -27,6 +27,7 @@ export function AdminDashboard() {
   const [monthImage, setMonthImage] = useState<File | null>(null);
   const [monthMenus, setMonthMenus] = useState<Record<number, string>>({});
   const [recognizingMonth, setRecognizingMonth] = useState(false);
+  const [monthConfidence, setMonthConfidence] = useState<Record<number, number>>({});
 
   useEffect(() => setDraft(state), [state]);
   useEffect(() => setMenuText(menu?.menuText ?? ''), [menu]);
@@ -100,34 +101,8 @@ export function AdminDashboard() {
   async function recognizeMonth() {
     if (!monthImage) { setMessage('먼저 한 달 급식표 사진을 선택해 주세요.'); return; }
     setRecognizingMonth(true);
-    setMessage('AI로 한 달 급식표를 분석하고 있습니다…');
+    setMessage('고정밀 한글 OCR을 준비하고 있습니다…');
     try {
-      if (user) {
-        const body = new FormData();
-        body.append('image', monthImage);
-        body.append('month', month);
-        const token = await user.getIdToken();
-        const response = await fetch('/api/extract-monthly-menu', {
-          method: 'POST',
-          headers: { authorization: `Bearer ${token}` },
-          body,
-        });
-        if (response.ok) {
-          const result = await response.json() as { menus?: Array<{ date: string; items: string[] }> };
-          const parsed: Record<number, string> = {};
-          for (const menu of result.menus ?? []) {
-            const day = Number(menu.date.slice(-2));
-            if (day >= 1 && day <= daysInMonth(month)) parsed[day] = menu.items.map((item) => item.trim()).filter(Boolean).join('\n');
-          }
-          if (Object.keys(parsed).length) {
-            setMonthMenus(parsed);
-            setMessage(`AI가 ${Object.keys(parsed).length}일의 메뉴를 분석했습니다. 내용을 확인한 뒤 저장해 주세요.`);
-            return;
-          }
-        }
-      }
-
-      setMessage('AI를 사용할 수 없어 기기 내 OCR로 자동 전환합니다…');
       const { createWorker, PSM } = await import('tesseract.js');
       const worker = await createWorker('kor+eng');
       await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK, preserve_interword_spaces: '1' });
@@ -136,6 +111,7 @@ export function AdminDashboard() {
       const cellWidth = bitmap.width / 5;
       const cellHeight = bitmap.height / weeks;
       const parsed: Record<number, string> = {};
+      const confidences: Record<number, number> = {};
       const weekdays = Array.from({ length: daysInMonth(month) }, (_, index) => index + 1)
         .filter((day) => weekdayCellForDay(month, day).column < 5);
 
@@ -162,19 +138,25 @@ export function AdminDashboard() {
           canvas.width,
           canvas.height,
         );
-        const result = await worker.recognize(canvas);
-        let menu = cleanMenuCell(result.data.text);
-        if (!menu) {
-          context.filter = 'none';
-          context.fillStyle = '#ffffff';
-          context.fillRect(0, 0, canvas.width, canvas.height);
-          context.drawImage(bitmap, column * cellWidth + 3, row * cellHeight + cellHeight * 0.06, cellWidth - 6, cellHeight * 0.92, 0, 0, canvas.width, canvas.height);
-          const retry = await worker.recognize(canvas);
-          menu = cleanMenuCell(retry.data.text);
-        }
+        await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK });
+        const contrastResult = await worker.recognize(canvas);
+
+        context.filter = 'none';
+        context.fillStyle = '#ffffff';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(bitmap, column * cellWidth + 3, row * cellHeight + cellHeight * 0.06, cellWidth - 6, cellHeight * 0.92, 0, 0, canvas.width, canvas.height);
+        await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT });
+        const colorResult = await worker.recognize(canvas);
+
+        const contrastScore = ocrResultScore(contrastResult.data.text, contrastResult.data.confidence);
+        const colorScore = ocrResultScore(colorResult.data.text, colorResult.data.confidence);
+        const selected = colorScore > contrastScore ? colorResult : contrastResult;
+        const menu = cleanMenuCell(selected.data.text);
         if (menu) {
           parsed[day] = menu;
+          confidences[day] = Math.round(selected.data.confidence);
           setMonthMenus({ ...parsed });
+          setMonthConfidence({ ...confidences });
         }
       }
       bitmap.close();
@@ -297,7 +279,7 @@ export function AdminDashboard() {
         </Card>
 
         <Card className="mt-5 gap-6 p-7 shadow-sm">
-          <div><h2 className="text-xl font-black tracking-tight">한 달 급식표 일괄 등록</h2><p className="mt-1 text-sm text-muted-foreground">AI가 월간 급식표의 날짜와 메뉴를 분석합니다. AI를 사용할 수 없으면 기기 내 OCR로 자동 전환하며, 사진은 서버에 저장하지 않습니다.</p></div>
+          <div><h2 className="text-xl font-black tracking-tight">한 달 급식표 일괄 등록</h2><p className="mt-1 text-sm text-muted-foreground">사진을 날짜별로 나눈 뒤 색상·대비가 다른 두 방식으로 한글을 읽고 더 정확한 결과를 선택합니다. 사진은 서버로 전송하거나 저장하지 않습니다.</p></div>
           <div className="grid gap-4 sm:grid-cols-[1fr_1.5fr_auto] sm:items-end">
             <label className="grid gap-2 text-sm font-bold">급식표 월<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="month" value={month} onChange={(event) => { setMonth(event.target.value); setMonthMenus({}); }} /></label>
             <label className="grid cursor-pointer gap-2 rounded-xl border-2 border-dashed border-sky-200 bg-sky-50 px-4 py-3 text-center hover:border-primary"><span className="text-sm font-extrabold">{monthImage ? monthImage.name : '한 달 급식표 사진 선택'}</span><span className="text-xs text-muted-foreground">가급적 표 전체가 반듯하고 선명하게 나오도록 촬영해 주세요.</span><input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setMonthImage(event.target.files?.[0] ?? null)} /></label>
@@ -307,7 +289,8 @@ export function AdminDashboard() {
             {Array.from({ length: daysInMonth(month) }, (_, index) => index + 1).map((day) => {
               const date = new Date(`${month}-${String(day).padStart(2, '0')}T12:00:00+09:00`);
               const weekend = [0, 6].includes(date.getDay());
-              return <label key={day} className={`grid gap-2 rounded-xl border bg-white p-3 ${weekend ? 'opacity-60' : ''}`}><span className="text-sm font-black">{day}일 <span className="text-xs text-muted-foreground">({date.toLocaleDateString('ko-KR', { weekday: 'short', timeZone: 'Asia/Seoul' })})</span></span><textarea className="min-h-28 resize-y rounded-lg border p-3 text-sm font-semibold leading-relaxed outline-none focus:ring-2 focus:ring-primary/30" value={monthMenus[day] ?? ''} onChange={(event) => setMonthMenus((current) => ({ ...current, [day]: event.target.value }))} placeholder={weekend ? '급식 없음' : '인식 후 확인하거나 직접 입력'} maxLength={2000} /></label>;
+              const needsReview = !weekend && monthConfidence[day] !== undefined && monthConfidence[day] < 55;
+              return <label key={day} className={`grid gap-2 rounded-xl border bg-white p-3 ${weekend ? 'opacity-60' : ''} ${needsReview ? 'border-rose-300 bg-rose-50/40' : ''}`}><span className="flex items-center justify-between gap-2 text-sm font-black"><span>{day}일 <span className="text-xs text-muted-foreground">({date.toLocaleDateString('ko-KR', { weekday: 'short', timeZone: 'Asia/Seoul' })})</span></span>{needsReview && <span className="rounded-full bg-rose-100 px-2 py-1 text-[11px] text-rose-700">확인 필요</span>}</span><textarea className="min-h-28 resize-y rounded-lg border bg-white p-3 text-sm font-semibold leading-relaxed outline-none focus:ring-2 focus:ring-primary/30" value={monthMenus[day] ?? ''} onChange={(event) => setMonthMenus((current) => ({ ...current, [day]: event.target.value }))} placeholder={weekend ? '급식 없음' : '인식 후 확인하거나 직접 입력'} maxLength={2000} /></label>;
             })}
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs font-semibold text-muted-foreground">내용이 있는 날짜만 저장하며, 이미 등록된 같은 날짜 메뉴는 새 내용으로 바뀝니다.</p><button type="button" onClick={saveMonthMenus} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-primary px-6 text-sm font-extrabold text-primary-foreground hover:bg-primary/90"><Save className="size-4" /> 한 달 메뉴 일괄 저장</button></div>
