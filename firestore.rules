@@ -7,6 +7,14 @@ service cloud.firestore {
       allow write: if request.auth != null && request.auth.token.admin == true;
     }
 
+    match /menus/{date} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.auth.token.admin == true
+        && request.resource.data.menuText is string
+        && request.resource.data.menuText.size() <= 2000;
+    }
+
     match /sensorEvents/{eventId} {
       allow read, write: if false;
     }

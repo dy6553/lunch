@@ -3,11 +3,12 @@
 import { useEffect, useState } from 'react';
 import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { ArrowLeft, LogOut, Minus, Plus, RotateCcw, Save, Settings2, Utensils, Wifi } from 'lucide-react';
+import { ArrowLeft, ImageUp, LoaderCircle, LogOut, Minus, Plus, RotateCcw, Save, Settings2, Sparkles, Utensils, Wifi } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { auth, db, isFirebaseConfigured } from '@/lib/firebase';
 import { type CafeteriaState } from '@/lib/cafeteria';
 import { useCafeteria } from '@/hooks/use-cafeteria';
+import { getKoreanDateKey, useDailyMenu } from '@/hooks/use-daily-menu';
 
 export function AdminDashboard() {
   const { state, connected } = useCafeteria();
@@ -16,8 +17,14 @@ export function AdminDashboard() {
   const [authReady, setAuthReady] = useState(!isFirebaseConfigured);
   const [message, setMessage] = useState('');
   const [draft, setDraft] = useState<CafeteriaState>(state);
+  const [menuDate, setMenuDate] = useState(getKoreanDateKey());
+  const { menu } = useDailyMenu(menuDate);
+  const [menuText, setMenuText] = useState('');
+  const [menuImage, setMenuImage] = useState<File | null>(null);
+  const [recognizing, setRecognizing] = useState(false);
 
   useEffect(() => setDraft(state), [state]);
+  useEffect(() => setMenuText(menu?.menuText ?? ''), [menu]);
   useEffect(() => {
     if (!auth) return;
     return onAuthStateChanged(auth, async (nextUser) => {
@@ -59,6 +66,43 @@ export function AdminDashboard() {
       await setDoc(doc(db, 'cafeterias', 'main'), { ...next, updatedAt: serverTimestamp() }, { merge: true });
       setMessage(successMessage);
     } catch { setMessage('저장하지 못했습니다. Firebase 권한을 확인해 주세요.'); }
+  }
+
+  async function recognizeMenu() {
+    if (!menuImage) { setMessage('먼저 메뉴판 사진을 선택해 주세요.'); return; }
+    setRecognizing(true);
+    setMessage('한글 인식 모델을 준비하고 있습니다. 처음에는 시간이 조금 걸릴 수 있습니다.');
+    try {
+      const { createWorker } = await import('tesseract.js');
+      const worker = await createWorker('kor+eng', undefined, {
+        logger: (progress) => {
+          if (progress.status === 'recognizing text') setMessage(`메뉴 글자를 읽는 중입니다… ${Math.round(progress.progress * 100)}%`);
+        },
+      });
+      const result = await worker.recognize(menuImage);
+      await worker.terminate();
+      const text = result.data.text
+        .split('\n')
+        .map((line) => line.replace(/^\s*[·•*\-]+\s*/, '').replace(/\s+/g, ' ').trim())
+        .filter((line) => line.length >= 2)
+        .join('\n');
+      if (!text) throw new Error('사진에서 글자를 찾지 못했습니다. 더 선명한 사진으로 시도해 주세요.');
+      setMenuText(text);
+      setMessage('사진에서 메뉴를 읽었습니다. 내용을 확인하고 저장해 주세요.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '사진 인식에 실패했습니다.');
+    } finally {
+      setRecognizing(false);
+    }
+  }
+
+  async function saveMenu() {
+    if (!menuText.trim()) { setMessage('메뉴 내용을 입력해 주세요.'); return; }
+    if (!db) { setMessage('Firebase 연결 후 메뉴를 저장할 수 있습니다.'); return; }
+    try {
+      await setDoc(doc(db, 'menus', menuDate), { date: menuDate, menuText: menuText.trim(), updatedAt: serverTimestamp() });
+      setMessage(`${menuDate} 메뉴를 저장했습니다.`);
+    } catch { setMessage('메뉴를 저장하지 못했습니다. Firebase 권한을 확인해 주세요.'); }
   }
 
   if (!authReady) return <div className="grid min-h-screen place-items-center bg-background text-sm font-bold text-muted-foreground">관리자 화면을 준비하고 있어요…</div>;
@@ -122,6 +166,27 @@ export function AdminDashboard() {
             {message && <p className="rounded-xl bg-blue-50 px-4 py-3 text-sm font-bold text-blue-800" role="status">{message}</p>}
           </Card>
         </div>
+
+        <Card className="mt-5 gap-6 p-7 shadow-sm">
+          <div><h2 className="text-xl font-black tracking-tight">날짜별 급식 메뉴</h2><p className="mt-1 text-sm text-muted-foreground">메뉴판 사진을 올리면 음식 이름을 읽어옵니다. 인식 결과를 확인·수정한 뒤 저장해 주세요.</p></div>
+          <div className="grid gap-5 lg:grid-cols-2">
+            <div className="grid gap-4">
+              <label className="grid gap-2 text-sm font-bold">메뉴 날짜<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="date" value={menuDate} onChange={(event) => setMenuDate(event.target.value)} /></label>
+              <label className="grid cursor-pointer gap-3 rounded-2xl border-2 border-dashed border-sky-200 bg-sky-50 p-5 text-center hover:border-primary">
+                <ImageUp className="mx-auto size-7 text-primary" />
+                <span className="text-sm font-extrabold">{menuImage ? menuImage.name : '메뉴판 사진 선택'}</span>
+                <span className="text-xs font-medium text-muted-foreground">JPG, PNG, WEBP · 최대 8MB</span>
+                <input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setMenuImage(event.target.files?.[0] ?? null)} />
+              </label>
+              <button type="button" disabled={!menuImage || recognizing} onClick={recognizeMenu} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-sky-600 px-5 text-sm font-extrabold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50">{recognizing ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}{recognizing ? '기기에서 사진 읽는 중…' : '사진에서 메뉴 읽기'}</button>
+            </div>
+            <div className="grid gap-4">
+              <label className="grid gap-2 text-sm font-bold">인식된 메뉴<textarea className="min-h-44 resize-y rounded-xl border bg-white p-4 font-semibold leading-relaxed outline-none focus:ring-2 focus:ring-primary/30" value={menuText} onChange={(event) => setMenuText(event.target.value)} placeholder={'현미밥\n미역국\n닭갈비\n배추김치'} maxLength={2000} /></label>
+              <p className="text-xs font-medium text-muted-foreground">음식 하나당 한 줄로 입력하면 학생 화면에 보기 좋게 표시됩니다.</p>
+              <button type="button" onClick={saveMenu} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-primary px-5 text-sm font-extrabold text-primary-foreground hover:bg-primary/90"><Save className="size-4" /> {menuDate} 메뉴 저장</button>
+            </div>
+          </div>
+        </Card>
       </div>
     </main>
   );

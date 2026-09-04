@@ -11,6 +11,12 @@ export type CafeteriaState = {
   updatedAt?: Date | null;
 };
 
+export type DailyMenu = {
+  date: string;
+  menuText: string;
+  updatedAt: Date | null;
+};
+
 export const demoState: CafeteriaState = {
   waitingCount: 48,
   serviceRatePerMinute: 30,

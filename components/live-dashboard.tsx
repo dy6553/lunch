@@ -1,14 +1,17 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowRight, Clock3, RefreshCw, ShieldCheck, Timer, Utensils, UsersRound, Wifi, WifiOff } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Clock3, RefreshCw, ShieldCheck, Soup, Timer, Utensils, UsersRound, Wifi, WifiOff } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { getCongestion } from '@/lib/cafeteria';
 import { useCafeteria } from '@/hooks/use-cafeteria';
+import { getKoreanDateKey, useDailyMenu } from '@/hooks/use-daily-menu';
 
 export function LiveDashboard() {
   const { state, connected, loading, demoMode } = useCafeteria();
   const [now, setNow] = useState<Date | null>(null);
+  const today = getKoreanDateKey();
+  const { menu, loading: menuLoading } = useDailyMenu(today);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -74,6 +77,14 @@ export function LiveDashboard() {
               </div>
               <a href="/admin" className="inline-flex items-center gap-1.5 text-xs font-bold text-muted-foreground transition-colors hover:text-primary">관리자 화면 <ArrowRight className="size-3.5" /></a>
             </Card>
+          </div>
+        </section>
+
+        <section className="mb-5 grid gap-4 rounded-3xl border border-sky-200 bg-sky-50 p-5 shadow-sm sm:grid-cols-[auto_1fr] sm:p-6">
+          <span className="grid size-12 place-items-center rounded-2xl bg-primary text-primary-foreground"><Soup className="size-6" /></span>
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-heading text-xl font-black tracking-tight">오늘의 급식</h2><span className="text-xs font-bold text-sky-700">{new Date(`${today}T12:00:00+09:00`).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short', timeZone: 'Asia/Seoul' })}</span></div>
+            {menuLoading ? <p className="mt-3 text-sm font-semibold text-muted-foreground">메뉴를 불러오고 있어요…</p> : menu?.menuText ? <ul className="mt-3 flex flex-wrap gap-2">{menu.menuText.split(/\n|,/).map((item) => item.trim()).filter(Boolean).map((item, index) => <li key={`${item}-${index}`} className="rounded-full border border-sky-200 bg-white px-3 py-1.5 text-sm font-extrabold text-sky-950">{item}</li>)}</ul> : <p className="mt-3 text-sm font-semibold text-muted-foreground">오늘 등록된 메뉴가 없습니다.</p>}
           </div>
         </section>
 
