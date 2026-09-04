@@ -35,3 +35,32 @@ export function parseMonthlyMenu(text: string, yearMonth: string) {
 
   return menus;
 }
+
+export function cleanMenuCell(text: string) {
+  return text
+    .split('\n')
+    .map((line) => line
+      .replace(/\([^)]*\d[^)]*\)/g, '')
+      .replace(/^\s*[·•*+\-]+\s*/, '')
+      .replace(/\s+/g, ' ')
+      .trim())
+    .filter((line) => line.length >= 2)
+    .filter((line) => /[가-힣]/.test(line))
+    .filter((line) => !/에너지|단백질|칼슘|철분|kcal|알레르기|권장식단|^[\d\s.,/]+$/.test(line))
+    .join('\n');
+}
+
+export function weekdayCellForDay(yearMonth: string, day: number) {
+  const [year, month] = yearMonth.split('-').map(Number);
+  const first = new Date(year, month - 1, 1);
+  const mondayOffset = (first.getDay() + 6) % 7;
+  const absoluteIndex = mondayOffset + day - 1;
+  return { row: Math.floor(absoluteIndex / 7), column: absoluteIndex % 7 };
+}
+
+export function calendarWeekCount(yearMonth: string) {
+  const [year, month] = yearMonth.split('-').map(Number);
+  const first = new Date(year, month - 1, 1);
+  const mondayOffset = (first.getDay() + 6) % 7;
+  return Math.ceil((mondayOffset + daysInMonth(yearMonth)) / 7);
+}

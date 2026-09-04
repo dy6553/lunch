@@ -9,7 +9,7 @@ import { auth, db, isFirebaseConfigured } from '@/lib/firebase';
 import { type CafeteriaState } from '@/lib/cafeteria';
 import { useCafeteria } from '@/hooks/use-cafeteria';
 import { getKoreanDateKey, useDailyMenu } from '@/hooks/use-daily-menu';
-import { cleanOcrText, daysInMonth, parseMonthlyMenu } from '@/lib/monthly-menu';
+import { calendarWeekCount, cleanMenuCell, cleanOcrText, daysInMonth, weekdayCellForDay } from '@/lib/monthly-menu';
 
 export function AdminDashboard() {
   const { state, connected } = useCafeteria();
@@ -103,14 +103,44 @@ export function AdminDashboard() {
     setMessage('한 달 급식표를 읽고 있습니다. 표가 크면 1분 정도 걸릴 수 있습니다.');
     try {
       const { createWorker } = await import('tesseract.js');
-      const worker = await createWorker('kor+eng', undefined, {
-        logger: (progress) => {
-          if (progress.status === 'recognizing text') setMessage(`한 달 급식표를 읽는 중입니다… ${Math.round(progress.progress * 100)}%`);
-        },
-      });
-      const result = await worker.recognize(monthImage);
+      const worker = await createWorker('kor+eng');
+      const bitmap = await createImageBitmap(monthImage);
+      const weeks = calendarWeekCount(month);
+      const cellWidth = bitmap.width / 5;
+      const cellHeight = bitmap.height / weeks;
+      const parsed: Record<number, string> = {};
+      const weekdays = Array.from({ length: daysInMonth(month) }, (_, index) => index + 1)
+        .filter((day) => weekdayCellForDay(month, day).column < 5);
+
+      for (let index = 0; index < weekdays.length; index += 1) {
+        const day = weekdays[index];
+        const { row, column } = weekdayCellForDay(month, day);
+        setMessage(`${month} 급식표를 날짜별로 읽는 중입니다… ${day}일 (${index + 1}/${weekdays.length})`);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(cellWidth * 1.6);
+        canvas.height = Math.round(cellHeight * 1.48);
+        const context = canvas.getContext('2d');
+        if (!context) continue;
+        context.fillStyle = '#ffffff';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.filter = 'grayscale(1) contrast(1.35)';
+        context.drawImage(
+          bitmap,
+          column * cellWidth + 3,
+          row * cellHeight + cellHeight * 0.08,
+          cellWidth - 6,
+          cellHeight * 0.9,
+          0,
+          0,
+          canvas.width,
+          canvas.height,
+        );
+        const result = await worker.recognize(canvas);
+        const menu = cleanMenuCell(result.data.text);
+        if (menu) parsed[day] = menu;
+      }
+      bitmap.close();
       await worker.terminate();
-      const parsed = parseMonthlyMenu(result.data.text, month);
       setMonthMenus(parsed);
       const count = Object.values(parsed).filter((value) => value.trim()).length;
       setMessage(`${count}일의 메뉴 초안을 만들었습니다. 날짜별 내용을 확인한 뒤 일괄 저장해 주세요.`);
