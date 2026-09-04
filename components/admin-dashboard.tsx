@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { doc, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 import { ArrowLeft, ImageUp, LoaderCircle, LogOut, Minus, Plus, RotateCcw, Save, Settings2, Sparkles, Utensils, Wifi } from 'lucide-react';
@@ -10,6 +10,7 @@ import { type CafeteriaState } from '@/lib/cafeteria';
 import { useCafeteria } from '@/hooks/use-cafeteria';
 import { getKoreanDateKey, useDailyMenu } from '@/hooks/use-daily-menu';
 import { calendarWeekCount, cleanMenuCell, cleanOcrText, daysInMonth, ocrResultScore, weekdayCellForDay } from '@/lib/monthly-menu';
+import { getKoreanHoliday, isWeekendDate } from '@/lib/korean-holidays';
 
 export function AdminDashboard() {
   const { state, connected } = useCafeteria();
@@ -28,6 +29,14 @@ export function AdminDashboard() {
   const [monthMenus, setMonthMenus] = useState<Record<number, string>>({});
   const [recognizingMonth, setRecognizingMonth] = useState(false);
   const [monthConfidence, setMonthConfidence] = useState<Record<number, number>>({});
+  const monthHolidays = useMemo(() => {
+    const holidays: Record<number, string> = {};
+    for (let day = 1; day <= daysInMonth(month); day += 1) {
+      const name = getKoreanHoliday(`${month}-${String(day).padStart(2, '0')}`);
+      if (name) holidays[day] = name;
+    }
+    return holidays;
+  }, [month]);
 
   useEffect(() => setDraft(state), [state]);
   useEffect(() => setMenuText(menu?.menuText ?? ''), [menu]);
@@ -113,7 +122,7 @@ export function AdminDashboard() {
       const parsed: Record<number, string> = {};
       const confidences: Record<number, number> = {};
       const weekdays = Array.from({ length: daysInMonth(month) }, (_, index) => index + 1)
-        .filter((day) => weekdayCellForDay(month, day).column < 5);
+        .filter((day) => weekdayCellForDay(month, day).column < 5 && !monthHolidays[day]);
 
       for (let index = 0; index < weekdays.length; index += 1) {
         const day = weekdays[index];
@@ -172,7 +181,10 @@ export function AdminDashboard() {
   }
 
   async function saveMonthMenus() {
-    const entries = Object.entries(monthMenus).filter(([, value]) => value.trim());
+    const entries = Object.entries(monthMenus).filter(([day, value]) => {
+      const dateKey = `${month}-${day.padStart(2, '0')}`;
+      return value.trim() && !isWeekendDate(dateKey) && !monthHolidays[Number(day)];
+    });
     if (!entries.length) { setMessage('저장할 메뉴가 없습니다.'); return; }
     if (!db) { setMessage('Firebase 연결 후 메뉴를 저장할 수 있습니다.'); return; }
     try {
@@ -281,19 +293,23 @@ export function AdminDashboard() {
         <Card className="mt-5 gap-6 p-7 shadow-sm">
           <div><h2 className="text-xl font-black tracking-tight">한 달 급식표 일괄 등록</h2><p className="mt-1 text-sm text-muted-foreground">사진을 날짜별로 나눈 뒤 색상·대비가 다른 두 방식으로 한글을 읽고 더 정확한 결과를 선택합니다. 사진은 서버로 전송하거나 저장하지 않습니다.</p></div>
           <div className="grid gap-4 sm:grid-cols-[1fr_1.5fr_auto] sm:items-end">
-            <label className="grid gap-2 text-sm font-bold">급식표 월<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="month" value={month} onChange={(event) => { setMonth(event.target.value); setMonthMenus({}); }} /></label>
+            <label className="grid gap-2 text-sm font-bold">급식표 월<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="month" value={month} onChange={(event) => { setMonth(event.target.value); setMonthMenus({}); setMonthConfidence({}); }} /></label>
             <label className="grid cursor-pointer gap-2 rounded-xl border-2 border-dashed border-sky-200 bg-sky-50 px-4 py-3 text-center hover:border-primary"><span className="text-sm font-extrabold">{monthImage ? monthImage.name : '한 달 급식표 사진 선택'}</span><span className="text-xs text-muted-foreground">가급적 표 전체가 반듯하고 선명하게 나오도록 촬영해 주세요.</span><input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setMonthImage(event.target.files?.[0] ?? null)} /></label>
             <button type="button" disabled={!monthImage || recognizingMonth} onClick={recognizeMonth} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-sky-600 px-5 text-sm font-extrabold text-white hover:bg-sky-700 disabled:opacity-50">{recognizingMonth ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}{recognizingMonth ? '분석 중…' : '한 달치 읽기'}</button>
           </div>
+          <div className="flex flex-wrap gap-2 text-xs font-bold"><span className="rounded-full border bg-white px-3 py-1.5">급식일</span><span className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5 text-slate-600">주말</span><span className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-rose-700">공휴일</span><span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-amber-700">확인 필요</span></div>
           <div className="grid max-h-[36rem] gap-3 overflow-y-auto rounded-2xl border bg-muted/30 p-3 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: daysInMonth(month) }, (_, index) => index + 1).map((day) => {
-              const date = new Date(`${month}-${String(day).padStart(2, '0')}T12:00:00+09:00`);
-              const weekend = [0, 6].includes(date.getDay());
-              const needsReview = !weekend && monthConfidence[day] !== undefined && monthConfidence[day] < 55;
-              return <label key={day} className={`grid gap-2 rounded-xl border bg-white p-3 ${weekend ? 'opacity-60' : ''} ${needsReview ? 'border-rose-300 bg-rose-50/40' : ''}`}><span className="flex items-center justify-between gap-2 text-sm font-black"><span>{day}일 <span className="text-xs text-muted-foreground">({date.toLocaleDateString('ko-KR', { weekday: 'short', timeZone: 'Asia/Seoul' })})</span></span>{needsReview && <span className="rounded-full bg-rose-100 px-2 py-1 text-[11px] text-rose-700">확인 필요</span>}</span><textarea className="min-h-28 resize-y rounded-lg border bg-white p-3 text-sm font-semibold leading-relaxed outline-none focus:ring-2 focus:ring-primary/30" value={monthMenus[day] ?? ''} onChange={(event) => setMonthMenus((current) => ({ ...current, [day]: event.target.value }))} placeholder={weekend ? '급식 없음' : '인식 후 확인하거나 직접 입력'} maxLength={2000} /></label>;
+              const dateKey = `${month}-${String(day).padStart(2, '0')}`;
+              const date = new Date(`${dateKey}T12:00:00+09:00`);
+              const weekend = isWeekendDate(dateKey);
+              const holiday = monthHolidays[day];
+              const dayOff = weekend || Boolean(holiday);
+              const needsReview = !dayOff && monthConfidence[day] !== undefined && monthConfidence[day] < 55;
+              return <div key={day} className={`grid gap-2 rounded-xl border p-3 ${holiday ? 'border-rose-200 bg-rose-50' : weekend ? 'border-slate-200 bg-slate-100' : 'bg-white'} ${needsReview ? 'border-amber-300 bg-amber-50/50' : ''}`}><span className="flex items-center justify-between gap-2 text-sm font-black"><span>{day}일 <span className="text-xs text-muted-foreground">({date.toLocaleDateString('ko-KR', { weekday: 'short', timeZone: 'Asia/Seoul' })})</span></span>{holiday ? <span className="rounded-full bg-rose-100 px-2 py-1 text-[11px] text-rose-700">공휴일</span> : weekend ? <span className="rounded-full bg-slate-200 px-2 py-1 text-[11px] text-slate-600">주말</span> : needsReview ? <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] text-amber-700">확인 필요</span> : null}</span>{dayOff ? <div className="grid min-h-28 place-content-center rounded-lg border border-dashed bg-white/60 p-3 text-center"><strong className={holiday ? 'text-rose-700' : 'text-slate-600'}>{holiday ?? '주말'}</strong><span className="mt-1 text-xs font-semibold text-muted-foreground">급식 없음 · 저장 제외</span></div> : <textarea aria-label={`${day}일 메뉴`} className="min-h-28 resize-y rounded-lg border bg-white p-3 text-sm font-semibold leading-relaxed outline-none focus:ring-2 focus:ring-primary/30" value={monthMenus[day] ?? ''} onChange={(event) => setMonthMenus((current) => ({ ...current, [day]: event.target.value }))} placeholder="인식 후 확인하거나 직접 입력" maxLength={2000} />}</div>;
             })}
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs font-semibold text-muted-foreground">내용이 있는 날짜만 저장하며, 이미 등록된 같은 날짜 메뉴는 새 내용으로 바뀝니다.</p><button type="button" onClick={saveMonthMenus} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-primary px-6 text-sm font-extrabold text-primary-foreground hover:bg-primary/90"><Save className="size-4" /> 한 달 메뉴 일괄 저장</button></div>
+          <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs font-semibold text-muted-foreground">내용이 있는 급식일만 저장하며, 주말과 공휴일은 자동으로 제외됩니다. 이미 등록된 같은 날짜 메뉴는 새 내용으로 바뀝니다.</p><button type="button" onClick={saveMonthMenus} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-primary px-6 text-sm font-extrabold text-primary-foreground hover:bg-primary/90"><Save className="size-4" /> 한 달 메뉴 일괄 저장</button></div>
         </Card>
       </div>
     </main>
