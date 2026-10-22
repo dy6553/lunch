@@ -1,102 +1,350 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowRight, Clock3, RefreshCw, ShieldCheck, Soup, Timer, Utensils, UsersRound, Wifi, WifiOff } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import {
+  ArrowRight,
+  Clock3,
+  Info,
+  RefreshCw,
+  ShieldCheck,
+  Soup,
+  UsersRound,
+  Utensils,
+  Wifi,
+  WifiOff,
+} from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { getCongestion } from '@/lib/cafeteria';
+import {
+  formatKoreanUpdateTime,
+  getDashboardStatus,
+  getQueueEstimate,
+} from '@/lib/dashboard';
 import { useCafeteria } from '@/hooks/use-cafeteria';
 import { getKoreanDateKey, useDailyMenu } from '@/hooks/use-daily-menu';
 
 export function LiveDashboard() {
-  const { state, connected, loading, demoMode } = useCafeteria();
+  const { state, connected, loading, hasData, demoMode } = useCafeteria();
   const [now, setNow] = useState<Date | null>(null);
-  const today = getKoreanDateKey();
-  const { menu, loading: menuLoading } = useDailyMenu(today);
+  const today = getKoreanDateKey(now ?? new Date());
+  const { menu, loading: menuLoading, error: menuError } = useDailyMenu(today);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
   }, []);
 
-  const displayedCount = useMemo(() => {
-    if (!state.autoDecreaseEnabled || !state.updatedAt || state.status !== 'OPEN') return state.waitingCount;
-    const elapsedMinutes = now ? Math.max(0, (now.getTime() - state.updatedAt.getTime()) / 60000) : 0;
-    return Math.max(0, Math.ceil(state.waitingCount - elapsedMinutes * state.serviceRatePerMinute));
-  }, [now, state]);
-
-  const waitMinutes = displayedCount ? Math.max(1, Math.ceil(displayedCount / Math.max(1, state.serviceRatePerMinute))) : 0;
-  const congestion = getCongestion(displayedCount);
-  const color = congestion.color === 'emerald' ? 'bg-emerald-400' : congestion.color === 'rose' ? 'bg-rose-400' : 'bg-amber-400';
+  const status = getDashboardStatus({
+    loading,
+    connected,
+    hasData,
+    demoMode,
+    status: state.status,
+  });
+  const showQueue = status.kind === 'open';
+  const settingsReady = !loading && hasData && (connected || demoMode);
+  const estimate = getQueueEstimate(state, now);
+  const congestion = getCongestion(estimate.count);
+  const congestionColor =
+    congestion.color === 'emerald'
+      ? 'bg-emerald-500'
+      : congestion.color === 'rose'
+        ? 'bg-rose-500'
+        : 'bg-amber-500';
+  const waitText = estimate.minutes
+    ? `약 ${estimate.minutes}분`
+    : '바로 이용 가능';
+  const connectionText = demoMode
+    ? '예시 데이터'
+    : loading
+      ? '연결 중'
+      : connected && hasData
+        ? '데이터 연결됨'
+        : '연결 확인 필요';
+  const updateText = demoMode
+    ? '실제 급식실 정보가 아닌 미리보기예요.'
+    : loading
+      ? '급식실 정보를 불러오고 있어요.'
+      : connected && hasData
+        ? formatKoreanUpdateTime(state.updatedAt, now)
+        : '연결이 복구되면 자동으로 갱신돼요.';
 
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-5 pb-8 pt-5 sm:px-8 sm:pt-8">
-        <header className="flex items-center justify-between">
+      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-5 pb-7 pt-5 sm:px-8 sm:pt-8">
+        <header className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <span className="grid size-11 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm"><Utensils className="size-5" strokeWidth={2.5} /></span>
-            <div><p className="font-heading text-lg font-extrabold tracking-tight">급식실 지금</p><p className="text-xs font-medium text-muted-foreground">실시간 대기 현황</p></div>
+            <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
+              <Utensils
+                aria-hidden="true"
+                className="size-5"
+                strokeWidth={2.5}
+              />
+            </span>
+            <div>
+              <h1 className="font-heading text-lg font-extrabold tracking-tight">
+                급식실 지금
+              </h1>
+              <p className="text-xs font-medium text-muted-foreground">
+                실시간 대기 현황
+              </p>
+            </div>
           </div>
-          <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold ${state.status === 'OPEN' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-stone-200 bg-stone-100 text-stone-600'}`}>
-            <span className={`size-2 rounded-full ${state.status === 'OPEN' ? 'bg-emerald-500 motion-safe:animate-pulse' : 'bg-stone-400'}`} />
-            {state.status === 'OPEN' ? '운영 중' : state.status === 'PAUSED' ? '잠시 멈춤' : '운영 종료'}
-          </span>
+          <output
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold ${showQueue ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : status.kind === 'paused' ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-stone-200 bg-stone-100 text-stone-600'}`}
+          >
+            <span
+              aria-hidden="true"
+              className={`size-2 rounded-full ${showQueue ? 'bg-emerald-500' : status.kind === 'paused' ? 'bg-amber-500' : 'bg-stone-400'}`}
+            />
+            {status.label}
+          </output>
         </header>
 
-        <section className="grid flex-1 items-center gap-5 py-8 lg:grid-cols-[1.25fr_0.75fr] lg:gap-7 lg:py-12">
-          <Card className="relative overflow-hidden border-0 bg-[linear-gradient(135deg,#0757bd_0%,#0e73dd_56%,#0b5cbc_100%)] p-7 text-primary-foreground shadow-[0_24px_70px_-30px_rgba(33,75,155,0.65)] sm:p-10">
-            <div className="absolute -right-20 -top-20 size-72 rounded-full bg-white/10" /><div className="absolute -bottom-32 right-28 size-64 rounded-full border-[36px] border-white/8" /><div className="absolute bottom-0 left-0 h-1 w-2/5 bg-amber-300" />
-            <div className="relative">
-              <div className="flex items-center justify-between gap-4">
-                <p className="text-sm font-bold tracking-tight text-blue-100">현재 기다리는 학생</p>
-                <span className="flex items-center gap-1.5 text-xs font-semibold text-blue-100">{connected || demoMode ? <Wifi className="size-3.5" /> : <WifiOff className="size-3.5" />} {loading ? '연결 중' : connected ? '실시간 연결' : demoMode ? '미리보기' : '재연결 중'}</span>
+        <div className="grid gap-5 py-6 sm:py-8 lg:grid-cols-[1.25fr_0.75fr] lg:gap-7">
+          <section
+            aria-label="현재 대기 안내"
+            className="contents lg:grid lg:content-start lg:gap-5"
+          >
+            <Card
+              aria-busy={loading}
+              className="order-1 relative overflow-hidden border-0 bg-[linear-gradient(135deg,#0757bd_0%,#0e73dd_56%,#0b5cbc_100%)] p-6 text-primary-foreground shadow-[0_20px_50px_-30px_rgba(33,75,155,0.65)] sm:p-9"
+            >
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute -right-20 -top-20 size-64 rounded-full bg-white/10"
+              />
+              <div className="relative">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h2 className="text-sm font-bold text-blue-100">
+                    현재 기다리는 학생
+                  </h2>
+                  <span className="flex items-center gap-1.5 text-xs font-semibold text-blue-100">
+                    {connected || demoMode ? (
+                      <Wifi aria-hidden="true" className="size-3.5" />
+                    ) : (
+                      <WifiOff aria-hidden="true" className="size-3.5" />
+                    )}{' '}
+                    {connectionText}
+                  </span>
+                </div>
+                <div className="mt-7 flex min-h-20 items-end gap-3 sm:mt-9 sm:min-h-32">
+                  <strong className="font-heading text-[clamp(5.5rem,19vw,9rem)] font-black leading-[0.8] tracking-[-0.07em] tabular-nums">
+                    {showQueue ? estimate.count : '—'}
+                  </strong>
+                  {showQueue && (
+                    <span className="pb-1 text-2xl font-extrabold sm:pb-2 sm:text-3xl">
+                      명
+                    </span>
+                  )}
+                </div>
+                <div className="mt-8 border-t border-white/20 pt-5 sm:mt-9">
+                  <p className="text-sm font-medium text-blue-100">
+                    {showQueue ? '지금 줄을 서면' : '대기 안내'}
+                  </p>
+                  <div className="mt-2 flex items-start gap-2.5">
+                    <Clock3
+                      aria-hidden="true"
+                      className="mt-1 size-6 shrink-0"
+                    />
+                    <output className="text-2xl font-black leading-snug tracking-tight sm:text-3xl">
+                      {showQueue ? waitText : status.headline}
+                    </output>
+                  </div>
+                  {!showQueue && (
+                    <p className="mt-3 text-sm leading-relaxed text-blue-100">
+                      {status.description}
+                    </p>
+                  )}
+                </div>
               </div>
-              <div className="mt-8 flex items-end gap-3 sm:mt-10">
-                <strong className="font-heading text-[clamp(6rem,20vw,11rem)] font-black leading-[0.72] tracking-[-0.09em]">{loading ? '…' : displayedCount}</strong>
-                {!loading && <span className="pb-1 text-2xl font-extrabold sm:pb-3 sm:text-3xl">명</span>}
-              </div>
-              <div className="mt-10 border-t border-white/20 pt-6 sm:mt-12">
-                <p className="text-sm font-medium text-blue-100">지금 줄을 서면</p>
-                <div className="mt-1 flex items-center gap-2"><Clock3 className="size-6" /><p className="text-3xl font-black tracking-tight">{loading ? '현재 인원 확인 중' : waitMinutes ? `약 ${waitMinutes}분` : '바로 이용 가능'}</p><ArrowRight className="ml-auto size-6 opacity-60" /></div>
-              </div>
-            </div>
-          </Card>
-
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-1">
-            <Card className="gap-5 border-border/80 bg-card p-6 shadow-sm">
-              <div className="flex items-start justify-between"><div><p className="text-sm font-bold text-muted-foreground">현재 혼잡도</p><p className={`mt-1 text-2xl font-black tracking-tight ${loading ? 'text-muted-foreground' : congestion.color === 'emerald' ? 'text-emerald-600' : congestion.color === 'rose' ? 'text-rose-600' : 'text-amber-600'}`}>{loading ? '확인 중' : congestion.label}</p></div><span className="rounded-full bg-muted px-3 py-1 text-xs font-extrabold text-muted-foreground">{loading ? '—' : congestion.short}</span></div>
-              <div className="space-y-2"><div className="h-3 overflow-hidden rounded-full bg-muted"><div className={`h-full rounded-full transition-all duration-700 ${color}`} style={{ width: loading ? '0%' : `${congestion.progress}%` }} /></div><div className="flex justify-between text-[11px] font-semibold text-muted-foreground"><span>여유</span><span>보통</span><span>혼잡</span></div></div>
-              <p className="text-sm leading-relaxed text-muted-foreground">{displayedCount > 60 ? '현재 줄이 길어요. 조금 뒤에 오면 더 빠르게 이용할 수 있어요.' : displayedCount > 20 ? '줄은 계속 줄어들고 있어요. 조금만 기다리면 더 여유로워집니다.' : '지금 오면 오래 기다리지 않고 이용할 수 있어요.'}</p>
             </Card>
 
-            <Card className="gap-5 border-border/80 bg-card p-6 shadow-sm">
-              <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-sky-100 text-sky-700"><RefreshCw className="size-4" /></span><div><p className="text-sm font-extrabold">자동 업데이트 중</p><p className="text-xs text-muted-foreground">{now ? `${now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })} 기준` : '실시간 자동 반영'}</p></div></div>
-              <div className="rounded-2xl bg-muted/70 p-4"><div className="flex items-center gap-2 text-xs font-bold text-muted-foreground"><ShieldCheck className="size-4 text-emerald-600" /> 카메라 없이 센서로만 측정해요</div></div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-2xl border border-border/70 bg-white p-3"><div className="flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground"><Timer className="size-3.5 text-primary" /> 예상 대기</div><p className="mt-1 text-lg font-black tracking-tight">{waitMinutes ? `${waitMinutes}분` : '없음'}</p></div>
-                <div className="rounded-2xl border border-border/70 bg-white p-3"><div className="flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground"><UsersRound className="size-3.5 text-primary" /> 배식 속도</div><p className="mt-1 text-lg font-black tracking-tight">분당 {state.serviceRatePerMinute}명</p></div>
+            <Card className="order-3 gap-4 bg-card p-5 shadow-sm sm:p-6">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-bold text-muted-foreground">
+                    현재 혼잡도
+                  </h2>
+                  <p
+                    className={`mt-1 text-xl font-black tracking-tight ${!showQueue ? 'text-muted-foreground' : congestion.color === 'emerald' ? 'text-emerald-600' : congestion.color === 'rose' ? 'text-rose-600' : 'text-amber-700'}`}
+                  >
+                    {showQueue ? congestion.label : status.label}
+                  </p>
+                </div>
+                {showQueue && (
+                  <span className="rounded-full bg-muted px-3 py-1 text-xs font-extrabold text-muted-foreground">
+                    {congestion.short}
+                  </span>
+                )}
               </div>
-              <a href="/admin" className="inline-flex items-center gap-1.5 text-xs font-bold text-muted-foreground transition-colors hover:text-primary">관리자 화면 <ArrowRight className="size-3.5" /></a>
+              {showQueue ? (
+                <>
+                  <div aria-hidden="true" className="space-y-2">
+                    <div className="h-2.5 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className={`h-full rounded-full transition-all duration-700 motion-reduce:transition-none ${congestionColor}`}
+                        style={{ width: `${congestion.progress}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between text-xs font-semibold text-muted-foreground">
+                      <span>여유</span>
+                      <span>보통</span>
+                      <span>혼잡</span>
+                    </div>
+                  </div>
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    {estimate.count > 60
+                      ? '현재 대기 인원이 많아요. 예상 대기 시간을 확인해 주세요.'
+                      : estimate.count > 20
+                        ? '현재 대기 인원이 있어요. 예상 대기 시간을 참고해 주세요.'
+                        : '현재 대기 인원이 적어 비교적 여유로워요.'}
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  {status.kind === 'loading'
+                    ? '인원을 확인한 뒤 혼잡도를 안내해 드려요.'
+                    : status.kind === 'unavailable'
+                      ? '연결이 복구되면 혼잡도를 확인할 수 있어요.'
+                      : '운영 중에 혼잡도를 안내해 드려요.'}
+                </p>
+              )}
+            </Card>
+          </section>
+
+          <div className="contents lg:grid lg:content-start lg:gap-5">
+            <section
+              aria-labelledby="daily-menu-title"
+              aria-busy={menuLoading}
+              className="order-2 rounded-3xl border border-sky-200 bg-sky-50 p-5 shadow-sm sm:p-6"
+            >
+              <div className="flex items-center gap-3">
+                <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground">
+                  <Soup aria-hidden="true" className="size-5" />
+                </span>
+                <div>
+                  <h2
+                    id="daily-menu-title"
+                    className="font-heading text-xl font-black tracking-tight"
+                  >
+                    오늘의 급식
+                  </h2>
+                  <p className="mt-0.5 text-xs font-bold text-sky-700">
+                    {new Date(`${today}T12:00:00+09:00`).toLocaleDateString(
+                      'ko-KR',
+                      {
+                        month: 'long',
+                        day: 'numeric',
+                        weekday: 'short',
+                        timeZone: 'Asia/Seoul',
+                      },
+                    )}
+                  </p>
+                </div>
+              </div>
+              {menuLoading ? (
+                <p className="mt-5 text-sm font-semibold text-muted-foreground">
+                  메뉴를 불러오고 있어요…
+                </p>
+              ) : menuError ? (
+                <p className="mt-5 text-sm font-semibold text-muted-foreground">
+                  메뉴 정보를 불러오지 못했어요. 연결을 확인해 주세요.
+                </p>
+              ) : menu?.menuText ? (
+                <ul className="mt-5 flex flex-wrap gap-2">
+                  {menu.menuText
+                    .split(/\n|,/)
+                    .map((item) => item.trim())
+                    .filter(Boolean)
+                    .map((item, index) => (
+                      <li
+                        key={`${item}-${index}`}
+                        className="rounded-xl border border-sky-200 bg-white px-3 py-2 text-sm font-bold text-sky-950"
+                      >
+                        {item}
+                      </li>
+                    ))}
+                </ul>
+              ) : (
+                <p className="mt-5 text-sm font-semibold text-muted-foreground">
+                  오늘 등록된 메뉴가 없습니다.
+                </p>
+              )}
+            </section>
+
+            <Card className="order-4 gap-5 self-start bg-card p-5 shadow-sm sm:p-6">
+              <div className="flex items-center gap-3">
+                <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-sky-100 text-sky-700">
+                  <RefreshCw aria-hidden="true" className="size-4" />
+                </span>
+                <div>
+                  <h2 className="text-sm font-extrabold">
+                    {demoMode
+                      ? '미리보기'
+                      : loading
+                        ? '연결 중'
+                        : connected && hasData
+                          ? '실시간 데이터 연결'
+                          : '연결 확인 필요'}
+                  </h2>
+                  <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                    {updateText}
+                  </p>
+                </div>
+              </div>
+              <dl className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3 text-sm">
+                <dt className="flex items-center gap-1.5 font-medium text-muted-foreground">
+                  <Clock3 aria-hidden="true" className="size-4" /> 운영 시간
+                </dt>
+                <dd className="text-right font-bold tabular-nums">
+                  {settingsReady
+                    ? `${state.serviceStartsAt}–${state.serviceEndsAt}`
+                    : loading
+                      ? '확인 중'
+                      : '확인 불가'}
+                </dd>
+                <dt className="flex items-center gap-1.5 font-medium text-muted-foreground">
+                  <UsersRound aria-hidden="true" className="size-4" /> 배식 속도
+                </dt>
+                <dd className="text-right font-bold">
+                  {settingsReady
+                    ? `분당 ${state.serviceRatePerMinute}명`
+                    : loading
+                      ? '확인 중'
+                      : '확인 불가'}
+                </dd>
+              </dl>
+              <p className="flex items-center gap-2 border-t border-border/70 pt-4 text-xs font-medium text-muted-foreground">
+                <ShieldCheck
+                  aria-hidden="true"
+                  className="size-4 shrink-0 text-emerald-600"
+                />{' '}
+                카메라 없이 센서로만 측정해요
+              </p>
             </Card>
           </div>
-        </section>
+        </div>
 
-        <section className="mb-5 grid gap-4 rounded-3xl border border-sky-200 bg-sky-50 p-5 shadow-sm sm:grid-cols-[auto_1fr] sm:p-6">
-          <span className="grid size-12 place-items-center rounded-2xl bg-primary text-primary-foreground"><Soup className="size-6" /></span>
-          <div>
-            <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-heading text-xl font-black tracking-tight">오늘의 급식</h2><span className="text-xs font-bold text-sky-700">{new Date(`${today}T12:00:00+09:00`).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short', timeZone: 'Asia/Seoul' })}</span></div>
-            {menuLoading ? <p className="mt-3 text-sm font-semibold text-muted-foreground">메뉴를 불러오고 있어요…</p> : menu?.menuText ? <ul className="mt-3 flex flex-wrap gap-2">{menu.menuText.split(/\n|,/).map((item) => item.trim()).filter(Boolean).map((item, index) => <li key={`${item}-${index}`} className="rounded-full border border-sky-200 bg-white px-3 py-1.5 text-sm font-extrabold text-sky-950">{item}</li>)}</ul> : <p className="mt-3 text-sm font-semibold text-muted-foreground">오늘 등록된 메뉴가 없습니다.</p>}
-          </div>
-        </section>
-
-        <aside className="mb-5 flex items-start gap-4 rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-4 text-amber-950 shadow-sm sm:items-center sm:px-6">
-          <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-amber-400 text-amber-950"><AlertTriangle className="size-6" strokeWidth={2.5} /></span>
-          <div>
-            <p className="font-heading text-lg font-black tracking-tight sm:text-xl">집계 인원과 예상 대기시간은 실제와 다를 수 있습니다</p>
-            <p className="mt-1 text-sm font-semibold leading-relaxed text-amber-900/80">센서 측정 환경과 배식 속도에 따라 인원 및 시간이 정확하지 않을 수 있으니 참고용으로 확인해 주세요.</p>
-          </div>
+        <aside className="mb-5 flex items-start gap-2.5 rounded-xl bg-muted/70 px-4 py-3 text-muted-foreground">
+          <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+          <p className="text-xs leading-relaxed">
+            센서 집계와 예상 대기 시간은 실제와 다를 수 있어요. 현장 상황을 함께
+            확인해 주세요.
+          </p>
         </aside>
 
-        <footer className="flex flex-col gap-2 border-t border-border/70 pt-5 text-xs font-medium text-muted-foreground sm:flex-row sm:items-center sm:justify-between"><p>표시 정보는 실시간 참고용입니다.</p><p>오늘 급식 운영 {state.serviceStartsAt}–{state.serviceEndsAt}</p></footer>
+        <footer className="mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-4 text-xs font-medium text-muted-foreground">
+          <p>급식실 지금 · 실시간 참고 정보</p>
+          <Link
+            href="/admin"
+            prefetch={false}
+            className="inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 font-bold transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          >
+            관리자 화면 <ArrowRight aria-hidden="true" className="size-3.5" />
+          </Link>
+        </footer>
       </div>
     </main>
   );
