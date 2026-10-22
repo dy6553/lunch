@@ -14,38 +14,60 @@ export function getKoreanDateKey(date = new Date()) {
   }).format(date);
 }
 
+type MenuResult = {
+  date: string;
+  menu: DailyMenu | null;
+  loading: boolean;
+  error: boolean;
+};
+
 export function useDailyMenu(date = getKoreanDateKey()) {
-  const [menu, setMenu] = useState<DailyMenu | null>(null);
-  const [loading, setLoading] = useState(Boolean(db));
+  const [result, setResult] = useState<MenuResult>({
+    date,
+    menu: null,
+    loading: Boolean(db),
+    error: false,
+  });
 
   useEffect(() => {
-    if (!db) {
-      setLoading(false);
-      return;
-    }
+    if (!db) return;
 
-    setLoading(true);
-    return onSnapshot(
+    const timeout = window.setTimeout(() => {
+      setResult({ date, menu: null, loading: false, error: true });
+    }, 15000);
+    const unsubscribe = onSnapshot(
       doc(db, 'menus', date),
+      { includeMetadataChanges: true },
       (snapshot) => {
-        if (!snapshot.exists()) {
-          setMenu(null);
-        } else {
+        if (!snapshot.exists() && snapshot.metadata.fromCache) return;
+        window.clearTimeout(timeout);
+        let menu: DailyMenu | null = null;
+        if (snapshot.exists()) {
           const data = snapshot.data();
-          setMenu({
+          menu = {
             date,
             menuText: typeof data.menuText === 'string' ? data.menuText : '',
-            updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt.toDate() : null,
-          });
+            updatedAt:
+              data.updatedAt instanceof Timestamp
+                ? data.updatedAt.toDate()
+                : null,
+          };
         }
-        setLoading(false);
+        setResult({ date, menu, loading: false, error: false });
       },
       () => {
-        setMenu(null);
-        setLoading(false);
+        window.clearTimeout(timeout);
+        setResult({ date, menu: null, loading: false, error: true });
       },
     );
+    return () => {
+      window.clearTimeout(timeout);
+      unsubscribe();
+    };
   }, [date]);
 
-  return { menu, loading };
+  // Never show yesterday's menu while the next Korean calendar date is loading.
+  return result.date === date
+    ? { menu: result.menu, loading: result.loading, error: result.error }
+    : { menu: null, loading: Boolean(db), error: false };
 }
