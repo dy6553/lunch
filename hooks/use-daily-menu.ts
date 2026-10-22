@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { doc, onSnapshot, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import type { DailyMenu } from '@/lib/cafeteria';
+import { getPublishedMenu } from '@/lib/published-menus';
 
 export function getKoreanDateKey(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', {
@@ -24,8 +25,8 @@ type MenuResult = {
 export function useDailyMenu(date = getKoreanDateKey()) {
   const [result, setResult] = useState<MenuResult>({
     date,
-    menu: null,
-    loading: Boolean(db),
+    menu: getPublishedMenu(date),
+    loading: Boolean(db) && !getPublishedMenu(date),
     error: false,
   });
 
@@ -33,7 +34,8 @@ export function useDailyMenu(date = getKoreanDateKey()) {
     if (!db) return;
 
     const timeout = window.setTimeout(() => {
-      setResult({ date, menu: null, loading: false, error: true });
+      const menu = getPublishedMenu(date);
+      setResult({ date, menu, loading: false, error: !menu });
     }, 15000);
     const unsubscribe = onSnapshot(
       doc(db, 'menus', date),
@@ -41,7 +43,7 @@ export function useDailyMenu(date = getKoreanDateKey()) {
       (snapshot) => {
         if (!snapshot.exists() && snapshot.metadata.fromCache) return;
         window.clearTimeout(timeout);
-        let menu: DailyMenu | null = null;
+        let menu: DailyMenu | null = getPublishedMenu(date);
         if (snapshot.exists()) {
           const data = snapshot.data();
           menu = {
@@ -57,7 +59,8 @@ export function useDailyMenu(date = getKoreanDateKey()) {
       },
       () => {
         window.clearTimeout(timeout);
-        setResult({ date, menu: null, loading: false, error: true });
+        const menu = getPublishedMenu(date);
+        setResult({ date, menu, loading: false, error: !menu });
       },
     );
     return () => {
@@ -67,7 +70,9 @@ export function useDailyMenu(date = getKoreanDateKey()) {
   }, [date]);
 
   // Never show yesterday's menu while the next Korean calendar date is loading.
-  return result.date === date
-    ? { menu: result.menu, loading: result.loading, error: result.error }
-    : { menu: null, loading: Boolean(db), error: false };
+  if (result.date === date) {
+    return { menu: result.menu, loading: result.loading, error: result.error };
+  }
+  const menu = getPublishedMenu(date);
+  return { menu, loading: Boolean(db) && !menu, error: false };
 }

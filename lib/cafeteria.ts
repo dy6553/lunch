@@ -15,6 +15,7 @@ export type DailyMenu = {
   date: string;
   menuText: string;
   updatedAt: Date | null;
+  note?: string;
 };
 
 export const demoState: CafeteriaState = {
