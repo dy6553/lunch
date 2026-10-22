@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { getCongestion } from '@/lib/cafeteria';
+import { getPublishedMenuSource } from '@/lib/published-menus';
 import {
   formatKoreanUpdateTime,
   getDashboardStatus,
@@ -29,6 +30,7 @@ export function LiveDashboard() {
   const [now, setNow] = useState<Date | null>(null);
   const today = getKoreanDateKey(now ?? new Date());
   const { menu, loading: menuLoading, error: menuError } = useDailyMenu(today);
+  const menuSource = getPublishedMenuSource(today);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -271,6 +273,28 @@ export function LiveDashboard() {
                 <p className="mt-5 text-sm font-semibold text-muted-foreground">
                   오늘 등록된 메뉴가 없습니다.
                 </p>
+              )}
+              {menu?.note && (
+                <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+                  {menu.note}
+                </p>
+              )}
+              {menuSource && (
+                <div className="mt-4 border-t border-sky-200 pt-3">
+                  <a
+                    href={menuSource}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex min-h-11 items-center gap-1.5 rounded-md text-sm font-bold text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                  >
+                    10월 식단표 원본 보기{' '}
+                    <ArrowRight aria-hidden="true" className="size-3.5" />
+                  </a>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    * 표시는 자율배식 메뉴예요. 알레르기 정보와 영양량은
+                    원본에서 확인해 주세요.
+                  </p>
+                </div>
               )}
             </section>
 
