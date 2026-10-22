@@ -5,8 +5,6 @@ import {
   ArrowRight,
   Clock3,
   Info,
-  RefreshCw,
-  ShieldCheck,
   Soup,
   UsersRound,
   Utensils,
@@ -75,7 +73,7 @@ export function LiveDashboard() {
 
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-5 pb-7 pt-5 sm:px-8 sm:pt-8">
+      <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 pb-6 pt-5 sm:px-6 sm:pt-6">
         <header className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
@@ -107,29 +105,24 @@ export function LiveDashboard() {
 
         <section
           aria-label="급식 운영 시간"
-          className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border/70 bg-white/70 px-4 py-3 text-sm"
+          className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
         >
           <span className="flex items-center gap-2 font-medium text-muted-foreground">
             <Clock3 aria-hidden="true" className="size-4" /> 급식 운영 시간
           </span>
-          <span className="font-extrabold tabular-nums">
+          <span className="font-bold text-foreground tabular-nums">
             {settingsReady
               ? `${state.serviceStartsAt}–${state.serviceEndsAt}`
               : loading
                 ? '확인 중'
                 : '확인 불가'}
           </span>
-          <span className="ml-auto text-xs text-muted-foreground">
-            한국 시간
-          </span>
         </section>
 
-        <div
-          className={`grid items-start gap-5 py-6 sm:py-8 lg:gap-7 ${showQueue ? 'lg:grid-cols-[1.1fr_0.9fr]' : 'lg:grid-cols-[0.9fr_1.1fr]'}`}
-        >
+        <div className="grid items-start gap-4 py-5 md:grid-cols-2 md:gap-5">
           <section
             aria-label="현재 대기 안내"
-            className="contents lg:grid lg:content-start lg:gap-5"
+            className="contents md:grid md:content-start md:gap-3"
           >
             <Card
               aria-busy={loading}
@@ -234,53 +227,27 @@ export function LiveDashboard() {
                 </p>
               </Card>
             )}
-            <Card className="order-4 gap-5 self-start bg-card p-5 shadow-sm sm:p-6">
-              <div className="flex items-center gap-3">
-                <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-sky-100 text-sky-700">
-                  <RefreshCw aria-hidden="true" className="size-4" />
-                </span>
-                <div>
-                  <h2 className="text-sm font-extrabold">
-                    {demoMode
-                      ? '미리보기'
-                      : loading
-                        ? '연결 중'
-                        : connected && hasData
-                          ? '데이터 연결됨'
-                          : '연결 확인 필요'}
-                  </h2>
-                  <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                    {updateText}
-                  </p>
-                </div>
-              </div>
-              <dl className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3 text-sm">
-                <dt className="flex items-center gap-1.5 font-medium text-muted-foreground">
-                  <UsersRound aria-hidden="true" className="size-4" /> 배식 속도
-                </dt>
-                <dd className="text-right font-bold">
+            <div className="order-4 space-y-1.5 px-1 text-xs leading-relaxed text-muted-foreground">
+              <p>{updateText}</p>
+              <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="inline-flex items-center gap-1.5">
+                  <UsersRound aria-hidden="true" className="size-3.5" />
                   {settingsReady
-                    ? `분당 ${state.serviceRatePerMinute}명`
+                    ? `배식 속도 분당 ${state.serviceRatePerMinute}명`
                     : loading
-                      ? '확인 중'
-                      : '확인 불가'}
-                </dd>
-              </dl>
-              <p className="flex items-center gap-2 border-t border-border/70 pt-4 text-xs font-medium text-muted-foreground">
-                <ShieldCheck
-                  aria-hidden="true"
-                  className="size-4 shrink-0 text-emerald-600"
-                />{' '}
-                카메라 없이 센서로만 측정해요
+                      ? '배식 속도 확인 중'
+                      : '배식 속도 확인 불가'}
+                </span>
+                <span>카메라 없이 센서로만 측정해요</span>
               </p>
-            </Card>
+            </div>
           </section>
 
-          <div className="contents lg:grid lg:content-start lg:gap-5">
+          <div className="contents md:grid md:content-start md:gap-3">
             <section
               aria-labelledby="daily-menu-title"
               aria-busy={menuLoading}
-              className="order-2 rounded-3xl border border-sky-200 bg-sky-50 p-5 shadow-sm sm:p-6"
+              className="order-2 rounded-2xl border border-sky-200 bg-sky-50 p-5 shadow-sm"
             >
               <div className="flex items-center gap-3">
                 <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground">
@@ -315,16 +282,12 @@ export function LiveDashboard() {
                   메뉴 정보를 불러오지 못했어요. 연결을 확인해 주세요.
                 </p>
               ) : menuItems.length ? (
-                <ul className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+                <ul className="mt-4 flex flex-wrap gap-2">
                   {menuItems.map((item, index) => (
                     <li
                       key={`${item.name}-${index}`}
-                      className="flex min-w-0 items-start gap-2.5 rounded-xl border border-sky-100 bg-white/90 px-3 py-2.5 text-sm text-sky-950"
+                      className="inline-flex max-w-full items-center gap-1.5 rounded-xl border border-sky-200 bg-white px-3 py-2 text-sm text-sky-950"
                     >
-                      <span
-                        aria-hidden="true"
-                        className="mt-1.5 size-1.5 shrink-0 rounded-full bg-sky-500"
-                      />
                       <span className="min-w-0 flex-1 break-keep font-bold leading-relaxed [overflow-wrap:anywhere]">
                         {item.name}
                       </span>
@@ -347,7 +310,7 @@ export function LiveDashboard() {
                 </p>
               )}
               {menuSource && (
-                <div className="mt-4 border-t border-sky-200 pt-3">
+                <div className="mt-3 border-t border-sky-200 pt-2">
                   <a
                     href={menuSource}
                     target="_blank"
@@ -358,8 +321,7 @@ export function LiveDashboard() {
                     <ArrowRight aria-hidden="true" className="size-3.5" />
                   </a>
                   <p className="text-xs leading-relaxed text-muted-foreground">
-                    자율배식 메뉴는 원하는 학생이 선택할 수 있어요. 알레르기
-                    정보와 영양량은 원본에서 확인해 주세요.
+                    알레르기 정보와 영양량은 원본에서 확인해 주세요.
                   </p>
                 </div>
               )}
@@ -367,7 +329,7 @@ export function LiveDashboard() {
           </div>
         </div>
 
-        <aside className="mb-5 flex items-start gap-2.5 rounded-xl bg-muted/70 px-4 py-3 text-muted-foreground">
+        <aside className="mb-3 flex items-start gap-2 border-t border-border/70 pt-3 text-muted-foreground">
           <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
           <p className="text-xs leading-relaxed">
             센서 집계와 예상 대기 시간은 실제와 다를 수 있어요. 현장 상황을 함께
@@ -375,7 +337,7 @@ export function LiveDashboard() {
           </p>
         </aside>
 
-        <footer className="mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-4 text-xs font-medium text-muted-foreground">
+        <footer className="flex flex-wrap items-center justify-between gap-3 text-xs font-medium text-muted-foreground">
           <p>급식실 지금 · 실시간 참고 정보</p>
           {/* Use document navigation: Vinext's client router currently fails on /admin. */}
           {/* oxlint-disable-next-line nextjs/no-html-link-for-pages */}
