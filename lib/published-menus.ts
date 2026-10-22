@@ -184,7 +184,7 @@ export function getPublishedMenu(date: string): DailyMenu | null {
     menuText: items.join('\n'),
     updatedAt: null,
     ...(date === '2026-10-13'
-      ? { note: '원본에서 가려진 메뉴 1종(담백…)은 확인 후 추가할 예정이에요.' }
+      ? { note: '원본에서 가려져 확인되지 않은 메뉴 1종(담백…)이 있어요.' }
       : {}),
   };
 }
