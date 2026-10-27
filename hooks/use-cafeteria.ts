@@ -38,6 +38,11 @@ export function useCafeteria() {
               data.updatedAt instanceof Timestamp
                 ? data.updatedAt.toDate()
                 : null,
+            lastHeartbeatAt:
+              data.lastHeartbeatAt instanceof Timestamp
+                ? data.lastHeartbeatAt.toDate()
+                : null,
+            sensorsReady: data.sensorsReady === true,
           } as CafeteriaState);
         }
         setHasData(snapshot.exists());

@@ -6,6 +6,7 @@ type DashboardConnection = {
   hasData: boolean;
   demoMode: boolean;
   status: CafeteriaState['status'];
+  sensorConnected?: boolean;
 };
 
 export function getDashboardStatus({
@@ -14,6 +15,7 @@ export function getDashboardStatus({
   hasData,
   demoMode,
   status,
+  sensorConnected,
 }: DashboardConnection) {
   if (loading)
     return {
@@ -44,12 +46,30 @@ export function getDashboardStatus({
       headline: '배식을 잠시 멈췄어요',
       description: '배식이 재개되면 예상 대기 시간을 다시 안내해 드려요.',
     } as const;
+  if (sensorConnected === false)
+    return {
+      kind: 'sensor-waiting',
+      label: '센서 연결 대기',
+      headline: '센서 연결을 기다리고 있어요',
+      description: '보드와 센서가 연결되면 현재 대기 인원을 안내해 드려요.',
+    } as const;
   return {
     kind: 'open',
     label: '운영 중',
     headline: '지금 줄을 서면',
     description: '센서로 확인한 현재 대기 상황이에요.',
   } as const;
+}
+
+export function getSensorConnection(state: CafeteriaState, now: Date | null) {
+  if (!state.lastHeartbeatAt || !now)
+    return { connected: false, label: '센서 연결 대기' };
+  const age = now.getTime() - state.lastHeartbeatAt.getTime();
+  if (age > 90000 || age < -5000)
+    return { connected: false, label: '센서 연결 끊김' };
+  if (!state.sensorsReady)
+    return { connected: false, label: '센서 배선 확인 필요' };
+  return { connected: true, label: '센서 연결됨' };
 }
 
 export function getQueueEstimate(state: CafeteriaState, now: Date | null) {
