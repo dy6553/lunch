@@ -43,6 +43,7 @@ export function useCafeteria() {
                 ? data.lastHeartbeatAt.toDate()
                 : null,
             sensorsReady: data.sensorsReady === true,
+            sensorMode: data.sensorMode === 'single' ? 'single' : 'paired',
           } as CafeteriaState);
         }
         setHasData(snapshot.exists());

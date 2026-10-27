@@ -1,5 +1,6 @@
 export type SensorEvent = {
   kind?: 'event';
+  sensorMode?: 'single' | 'paired';
   eventId: string;
   deviceId: string;
   sensorId: 'A' | 'B';
@@ -13,6 +14,7 @@ export type SensorEvent = {
 };
 type ControlBase = {
   deviceId: string;
+  sensorMode?: 'single' | 'paired';
   bootId?: string;
   firmwareVersion?: string;
 };
@@ -54,6 +56,12 @@ export function validSensorMessage(value: unknown): value is SensorMessage {
     (typeof b.firmwareVersion !== 'string' || b.firmwareVersion.length > 40)
   )
     return false;
+  if (
+    b.sensorMode !== undefined &&
+    b.sensorMode !== 'single' &&
+    b.sensorMode !== 'paired'
+  )
+    return false;
   if (b.kind === 'check') return true;
   if (b.kind === 'heartbeat') return typeof b.sensorsReady === 'boolean';
   if (b.kind !== undefined && b.kind !== 'event') return false;
@@ -62,6 +70,11 @@ export function validSensorMessage(value: unknown): value is SensorMessage {
     !/^[A-Za-z0-9_-]{6,120}$/.test(b.eventId) ||
     (b.sensorId !== 'A' && b.sensorId !== 'B') ||
     !safeInteger(b.sequence, 0)
+  )
+    return false;
+  if (
+    b.sensorMode === 'single' &&
+    (b.sensorId !== 'A' || b.bootId === undefined || b.uptimeMs === undefined)
   )
     return false;
   if ((b.bootId === undefined) !== (b.uptimeMs === undefined)) return false;
@@ -125,6 +138,19 @@ export function pairSensorEvent(
   pending: PendingGate,
   occurredAt: number,
 ) {
+  if (event.sensorMode === 'single') {
+    return {
+      direction: 'PASS',
+      transitMs: null,
+      pending: {
+        sensor: '',
+        at: 0,
+        deviceId: event.deviceId,
+        bootId: event.bootId ?? '',
+        uptimeMs: 0,
+      },
+    } as const;
+  }
   const sameSession =
     pending.deviceId === event.deviceId &&
     pending.bootId === (event.bootId ?? '');

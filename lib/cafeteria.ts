@@ -10,6 +10,7 @@ export type CafeteriaState = {
   lastSensorAt?: Date | null;
   lastHeartbeatAt?: Date | null;
   sensorsReady?: boolean;
+  sensorMode?: 'single' | 'paired';
   updatedAt?: Date | null;
 };
 

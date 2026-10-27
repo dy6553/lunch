@@ -145,8 +145,9 @@ export async function GET() {
   return Response.json({
     ok: true,
     service: 'cafeteria-sensor-ingest',
-    version: 2,
+    version: 3,
     sensors: ['A', 'B'],
+    sensorModes: ['single', 'paired'],
     configured: Boolean(
       process.env.FIREBASE_CLIENT_EMAIL &&
       process.env.FIREBASE_PRIVATE_KEY &&
@@ -210,7 +211,7 @@ export async function POST(request: Request) {
         );
       return Response.json({
         ok: true,
-        version: 2,
+        version: 3,
         deviceId: body.deviceId,
         servingStatus: stringField(cafeteria, 'status'),
         datastoreReadable: true,
@@ -231,6 +232,7 @@ export async function POST(request: Request) {
                 fields: {
                   sensorsReady: { booleanValue: body.sensorsReady! },
                   sensorDeviceId: { stringValue: body.deviceId },
+                  sensorMode: { stringValue: body.sensorMode ?? 'paired' },
                   sensorFirmwareVersion: {
                     stringValue: body.firmwareVersion ?? 'unknown',
                   },
@@ -241,6 +243,7 @@ export async function POST(request: Request) {
                 fieldPaths: [
                   'sensorsReady',
                   'sensorDeviceId',
+                  'sensorMode',
                   'sensorFirmwareVersion',
                 ],
               },
@@ -311,6 +314,7 @@ export async function POST(request: Request) {
       eventId: { stringValue: body.eventId },
       deviceId: { stringValue: body.deviceId },
       sensorId: { stringValue: body.sensorId },
+      sensorMode: { stringValue: body.sensorMode ?? 'paired' },
       sequence: { integerValue: String(body.sequence) },
       direction: { stringValue: pair.direction },
       occurredAt: { timestampValue: new Date(occurredAt).toISOString() },
@@ -351,7 +355,8 @@ export async function POST(request: Request) {
       },
     ];
     const waitingCountChanged =
-      pair.direction === 'IN' && stringField(cafeteria, 'status') === 'OPEN';
+      (pair.direction === 'IN' || pair.direction === 'PASS') &&
+      stringField(cafeteria, 'status') === 'OPEN';
     if (waitingCountChanged) {
       const baseCount = Math.max(0, intField(cafeteria, 'waitingCount'));
       const rate = Math.max(1, intField(cafeteria, 'serviceRatePerMinute', 30));

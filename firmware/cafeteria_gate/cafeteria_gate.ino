@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <VL53L1X.h>
+#include <VL53L0X.h>
+#include "config.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <Wire.h>
@@ -21,10 +23,52 @@ constexpr uint8_t STABLE_SAMPLES = 3;
 constexpr uint32_t HEARTBEAT_MS = 20000;
 constexpr uint32_t MAX_EVENT_AGE_MS = 30000;
 constexpr char DEVICE_ID[] = "cafeteria-gate-01";
-constexpr char FIRMWARE_VERSION[] = "1.1.0";
+constexpr char FIRMWARE_VERSION[] = "1.3.0";
 
-VL53L1X sensorA;
-VL53L1X sensorB;
+// Both supported chips can be used, including one of each in two-sensor mode.
+struct DistanceSensor {
+  VL53L0X l0;
+  VL53L1X l1;
+  uint8_t model = 0;
+  bool begin(uint8_t address) {
+    l0.setTimeout(100);
+    l1.setTimeout(100);
+    if (l1.readReg16Bit(VL53L1X::IDENTIFICATION__MODEL_ID) == 0xEACC) {
+      if (!l1.init()) return false;
+      l1.setAddress(address);
+      if (!l1.setDistanceMode(VL53L1X::Long) || !l1.setMeasurementTimingBudget(50000)) return false;
+      l1.startContinuous(60);
+      model = 1;
+      Serial.printf("SENSOR 0x%02X: VL53L1X OK\n", address);
+    } else if (l0.readReg(0xC0) == 0xEE) {
+      if (!l0.init()) return false;
+      l0.setAddress(address);
+      if (!l0.setMeasurementTimingBudget(50000)) return false;
+      l0.startContinuous(60);
+      model = 2;
+      Serial.printf("SENSOR 0x%02X: VL53L0X OK\n", address);
+    } else return false;
+    return true;
+  }
+  bool read(uint16_t& mm, bool& valid, bool& noTarget) {
+    noTarget = false;
+    if (model == 1) {
+      if (!l1.dataReady()) return false;
+      mm = l1.read(false);
+      valid = !l1.timeoutOccurred() && l1.last_status == 0 &&
+          l1.ranging_data.range_status == VL53L1X::RangeValid;
+    } else {
+      if (!(l0.readReg(VL53L0X::RESULT_INTERRUPT_STATUS) & 0x07) || l0.last_status != 0) return false;
+      mm = l0.readRangeContinuousMillimeters();
+      valid = !l0.timeoutOccurred() && l0.last_status == 0;
+      noTarget = valid && mm >= 8190;
+      valid = valid && !noTarget;
+    }
+    return true;
+  }
+};
+DistanceSensor sensorA;
+DistanceSensor sensorB;
 std::atomic<bool> sensorsReady{false};
 std::atomic<bool> networkReady{false};
 char bootId[17];
@@ -33,6 +77,9 @@ QueueHandle_t eventQueue = nullptr;
 
 struct BeamState {
   bool blocked = false;
+  bool armed = false;
+  bool pendingPassage = false;
+  uint16_t passageDistance = 0;
   uint8_t blockedSamples = 0;
   uint8_t clearSamples = 0;
   uint32_t lastFrameMs = 0;
@@ -55,14 +102,6 @@ uint64_t epochMs() {
 }
 bool clockReady() { return time(nullptr) >= 1735689600; }
 
-bool initSensor(VL53L1X& sensor, uint8_t address) {
-  sensor.setTimeout(100);
-  if (!sensor.init()) return false;
-  sensor.setAddress(address);
-  if (!sensor.setDistanceMode(VL53L1X::Long) || !sensor.setMeasurementTimingBudget(50000)) return false;
-  sensor.startContinuous(60);
-  return true;
-}
 bool startSensors() {
   // LOW disables the sensor. INPUT releases XSHUT to its carrier's pull-up;
   // never actively drive a 2.8 V XSHUT pin HIGH with the ESP32's 3.3 V output.
@@ -73,22 +112,36 @@ bool startSensors() {
   delay(10);
   pinMode(XSHUT_A_PIN, INPUT);
   delay(10);
-  if (!initSensor(sensorA, 0x30)) return false;
-  pinMode(XSHUT_B_PIN, INPUT);
-  delay(10);
-  if (!initSensor(sensorB, 0x31)) return false;
+  if (SENSOR_COUNT == 1) pinMode(XSHUT_B_PIN, INPUT);
+  sensorA = DistanceSensor{};
+  if (!sensorA.begin(0x30)) return false;
+  if (SENSOR_COUNT == 2) {
+    pinMode(XSHUT_B_PIN, INPUT);
+    delay(10);
+    sensorB = DistanceSensor{};
+    if (!sensorB.begin(0x31)) return false;
+  }
   beamA = BeamState{};
   beamB = BeamState{};
   beamA.lastFrameMs = beamB.lastFrameMs = millis();
   return true;
 }
 
-void sampleBeam(VL53L1X& sensor, BeamState& beam, char id) {
-  if (!sensor.dataReady() || sensor.last_status != 0) return;
-  const uint16_t distance = sensor.read(false);
+void sampleBeam(DistanceSensor& sensor, BeamState& beam, char id) {
+  uint16_t distance = 0;
+  bool valid = false;
+  bool noTarget = false;
+  if (!sensor.read(distance, valid, noTarget)) return;
   beam.lastFrameMs = millis();
-  if (sensor.timeoutOccurred() || sensor.last_status != 0 ||
-      sensor.ranging_data.range_status != VL53L1X::RangeValid) {
+  static uint32_t lastPrint[2] = {0, 0};
+  const uint8_t index = id == 'A' ? 0 : 1;
+  if (PRINT_DISTANCES && millis() - lastPrint[index] >= 500) {
+    lastPrint[index] = millis();
+    if (valid) Serial.printf("DISTANCE %c: %u mm (%.1f cm)\n", id, distance, distance / 10.0);
+    else Serial.printf("DISTANCE %c: %s\n", id, noTarget ? "OUT OF RANGE" : "INVALID");
+  }
+  if (noTarget) distance = CLEAR_DISTANCE_MM;
+  else if (!valid) {
     beam.blockedSamples = beam.clearSamples = 0;
     return;
   }
@@ -98,6 +151,11 @@ void sampleBeam(VL53L1X& sensor, BeamState& beam, char id) {
     if (!beam.blocked && beam.blockedSamples >= STABLE_SAMPLES) {
       beam.blocked = true;
       Serial.printf("SENSOR %c: %u mm\n", id, static_cast<unsigned>(distance));
+      if (SENSOR_COUNT == 1) {
+        beam.pendingPassage = beam.armed;
+        beam.passageDistance = distance;
+        return;
+      }
       if (!networkReady.load()) {
         Serial.println("LOCAL ONLY: Wi-Fi/server not ready; event not uploaded.");
         return;
@@ -110,7 +168,20 @@ void sampleBeam(VL53L1X& sensor, BeamState& beam, char id) {
   } else if (distance >= CLEAR_DISTANCE_MM) {
     beam.blockedSamples = 0;
     if (beam.clearSamples < STABLE_SAMPLES) ++beam.clearSamples;
-    if (beam.clearSamples >= STABLE_SAMPLES) beam.blocked = false;
+    if (beam.clearSamples >= STABLE_SAMPLES) {
+      beam.blocked = false;
+      beam.armed = true;
+      if (SENSOR_COUNT == 1 && beam.pendingPassage) {
+        beam.pendingPassage = false;
+        if (!networkReady.load()) {
+          Serial.println("LOCAL PASSAGE: server not ready; not uploaded.");
+        } else {
+          SensorEvent event{uptimeMs(), epochMs(), ++sequenceNumber, beam.passageDistance, id};
+          if (xQueueSend(eventQueue, &event, 0) != pdTRUE) Serial.println("QUEUE FULL: passage lost.");
+          else Serial.println("PASSAGE COMPLETE: queued one person.");
+        }
+      }
+    }
   } else {
     beam.blockedSamples = beam.clearSamples = 0;
   }
@@ -129,6 +200,9 @@ int postJson(const String& json) {
   const int status = http.POST(json);
   // A 2xx transport response alone is insufficient if the body is malformed.
   const String response = http.getString();
+  if (json.indexOf("\"kind\":\"event\"") >= 0 && status >= 200 && status < 300) {
+    Serial.printf("SERVER RESULT: %s\n", response.c_str());
+  }
   http.end();
   if (response.indexOf("\"servingStatus\":\"CLOSED\"") >= 0) Serial.println("SITE CLOSED: connection is ready; enable serving in /admin to display the queue.");
   if (response.indexOf("\"servingStatus\":\"PAUSED\"") >= 0) Serial.println("SITE PAUSED: connection is ready; resume serving in /admin when appropriate.");
@@ -137,7 +211,7 @@ int postJson(const String& json) {
 }
 bool success(int status) { return status >= 200 && status < 300; }
 String baseMessage(const char* kind) {
-  return String("{\"kind\":\"") + kind + "\",\"deviceId\":\"" + DEVICE_ID + "\",\"bootId\":\"" + bootId + "\"";
+  return String("{\"kind\":\"") + kind + "\",\"deviceId\":\"" + DEVICE_ID + "\",\"bootId\":\"" + bootId + "\",\"sensorMode\":\"" + (SENSOR_COUNT == 1 ? "single" : "paired") + "\"";
 }
 
 void networkTask(void*) {
@@ -200,7 +274,7 @@ void networkTask(void*) {
       verified = true;
       networkReady.store(true);
       lastHeartbeat = now - HEARTBEAT_MS;
-      Serial.println("SERVER OK: sensor data will upload automatically.");
+      Serial.println(SENSOR_COUNT == 2 ? "SERVER OK: paired sensor events enabled." : "SERVER OK: single-sensor passage counting enabled.");
     }
     if (millis() - lastHeartbeat >= HEARTBEAT_MS) {
       const String json = baseMessage("heartbeat") + ",\"sensorsReady\":" +
@@ -244,7 +318,7 @@ void networkTask(void*) {
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Serial.println("Cafeteria gate 1.1.0: two VL53L1X sensors, ESP32 Dev Module");
+  Serial.printf("Cafeteria gate 1.3.0: %u sensor(s), automatic L0X/L1X detection\n", SENSOR_COUNT);
   snprintf(bootId, sizeof(bootId), "%08lx%08lx", static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()));
   Wire.begin(SDA_PIN, SCL_PIN, 100000);
   Wire.setTimeOut(25);
@@ -262,14 +336,14 @@ void loop() {
       lastInit = millis();
       const bool ready = startSensors();
       sensorsReady.store(ready);
-      Serial.println(ready ? "SENSORS OK: A=0x30, B=0x31" : "SENSOR INIT FAILED: check both sensors and XSHUT wires; retrying.");
+      Serial.println(ready ? "SENSORS OK" : "SENSOR INIT FAILED: check configured sensor count and wiring; retrying.");
     }
     delay(5);
     return;
   }
   sampleBeam(sensorA, beamA, 'A');
-  sampleBeam(sensorB, beamB, 'B');
-  if (millis() - beamA.lastFrameMs > 5000 || millis() - beamB.lastFrameMs > 5000) {
+  if (SENSOR_COUNT == 2) sampleBeam(sensorB, beamB, 'B');
+  if (millis() - beamA.lastFrameMs > 5000 || (SENSOR_COUNT == 2 && millis() - beamB.lastFrameMs > 5000)) {
     sensorsReady.store(false);
     Serial.println("SENSOR DATA LOST: restarting sensors.");
   }

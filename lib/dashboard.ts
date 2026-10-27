@@ -69,7 +69,11 @@ export function getSensorConnection(state: CafeteriaState, now: Date | null) {
     return { connected: false, label: '센서 연결 끊김' };
   if (!state.sensorsReady)
     return { connected: false, label: '센서 배선 확인 필요' };
-  return { connected: true, label: '센서 연결됨' };
+  return {
+    connected: true,
+    label:
+      state.sensorMode === 'single' ? '센서 1개 · 통과 집계' : '센서 연결됨',
+  };
 }
 
 export function getQueueEstimate(state: CafeteriaState, now: Date | null) {

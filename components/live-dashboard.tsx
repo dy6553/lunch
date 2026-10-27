@@ -184,9 +184,11 @@ export function LiveDashboard() {
                       {showQueue ? waitText : status.headline}
                     </output>
                   </div>
-                  {!showQueue && (
+                  {(!showQueue || state.sensorMode === 'single') && (
                     <p className="mt-3 text-sm leading-relaxed text-blue-100">
-                      {status.description}
+                      {state.sensorMode === 'single' && showQueue
+                        ? '센서 1개로 통과를 집계한 추정 인원이에요. 입장과 퇴장은 구분하지 못해요.'
+                        : status.description}
                     </p>
                   )}
                 </div>

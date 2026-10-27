@@ -370,3 +370,81 @@ test.after(() => {
     else process.env[key] = envBefore[key];
   }
 });
+
+test('single-sensor passages count once, retries are idempotent, and stale paired state is cleared', async () => {
+  reset();
+  await post(event); // old unmatched A must not affect single-sensor mode
+  const passage = {
+    ...event,
+    sensorMode: 'single',
+    eventId: 'single-pass-0001',
+    sequence: 2,
+    uptimeMs: 2000,
+  };
+  assert.equal(validSensorMessage(passage), true);
+  const result = await (await post(passage)).json();
+  assert.equal(result.direction, 'PASS');
+  assert.equal(result.waitingCountChanged, true);
+  assert.equal(
+    docs.get('cafeterias/main').fields.waitingCount.integerValue,
+    '9',
+  );
+  assert.equal(
+    docs.get('gateStates/main').fields.pendingSensor.stringValue,
+    '',
+  );
+  assert.equal((await (await post(passage)).json()).duplicate, true);
+  assert.equal(
+    docs.get('cafeterias/main').fields.waitingCount.integerValue,
+    '9',
+  );
+  assert.equal(
+    docs.get('sensorEvents/single-pass-0001').fields.sensorMode.stringValue,
+    'single',
+  );
+});
+
+test('single mode validates real sensor A/session data and does not count while closed or paused', async () => {
+  assert.equal(
+    validSensorMessage({ ...event, sensorMode: 'single', sensorId: 'B' }),
+    false,
+  );
+  assert.equal(
+    validSensorMessage({
+      ...event,
+      sensorMode: 'single',
+      bootId: undefined,
+      uptimeMs: undefined,
+    }),
+    false,
+  );
+  assert.equal(
+    validSensorMessage({ ...event, sensorMode: 'unsupported' }),
+    false,
+  );
+  for (const status of ['CLOSED', 'PAUSED']) {
+    reset(status);
+    const response = await post({ ...event, sensorMode: 'single' });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).waitingCountChanged, false);
+    assert.equal(
+      docs.get('cafeterias/main').fields.waitingCount.integerValue,
+      '8',
+    );
+  }
+});
+
+test('single-sensor heartbeat reports initialized counter and visible mode without changing count', async () => {
+  reset();
+  const result = await post({
+    kind: 'heartbeat',
+    deviceId,
+    sensorMode: 'single',
+    sensorsReady: true,
+  });
+  assert.equal(result.status, 200);
+  const state = docs.get('cafeterias/main').fields;
+  assert.equal(state.sensorsReady.booleanValue, true);
+  assert.equal(state.sensorMode.stringValue, 'single');
+  assert.equal(state.waitingCount.integerValue, '8');
+});
