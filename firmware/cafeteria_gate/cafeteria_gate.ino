@@ -11,6 +11,7 @@
 #include <time.h>
 #include "ca_cert.h"
 #include "secrets.h"
+#include "wifi_setup.h"
 
 namespace {
 constexpr uint8_t SDA_PIN = 21;
@@ -23,7 +24,8 @@ constexpr uint8_t STABLE_SAMPLES = 3;
 constexpr uint32_t HEARTBEAT_MS = 20000;
 constexpr uint32_t MAX_EVENT_AGE_MS = 30000;
 constexpr char DEVICE_ID[] = "cafeteria-gate-01";
-constexpr char FIRMWARE_VERSION[] = "1.3.0";
+constexpr char FIRMWARE_VERSION[] = "1.4.0";
+WifiSetup wifiSetup;
 
 // Both supported chips can be used, including one of each in two-sensor mode.
 struct DistanceSensor {
@@ -214,38 +216,34 @@ String baseMessage(const char* kind) {
   return String("{\"kind\":\"") + kind + "\",\"deviceId\":\"" + DEVICE_ID + "\",\"bootId\":\"" + bootId + "\",\"sensorMode\":\"" + (SENSOR_COUNT == 1 ? "single" : "paired") + "\"";
 }
 
+void wifiSetupTask(void*) {
+  wifiSetup.begin(WIFI_SSID, WIFI_PASSWORD);
+  for (;;) {
+    wifiSetup.poll();
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
 void networkTask(void*) {
-  WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(true);
-  WiFi.setSleep(false);
-  uint32_t lastConnect = 0;
+  uint32_t wifiRevision = wifiSetup.revision();
   uint32_t lastHeartbeat = 0;
   uint32_t lastNotice = 0;
-  bool connecting = false;
   bool timeRequested = false;
   bool verified = false;
   bool haveEvent = false;
   SensorEvent event{};
   for (;;) {
     const uint32_t now = millis();
-    if (strlen(WIFI_SSID) == 0) {
+    const uint32_t currentRevision = wifiSetup.revision();
+    if (currentRevision != wifiRevision) {
+      wifiRevision = currentRevision;
+      verified = false;
+      timeRequested = false;
       networkReady.store(false);
-      if (lastNotice == 0 || now - lastNotice >= 30000) {
-        Serial.println("WIFI NOT SET: fill WIFI_SSID / WIFI_PASSWORD in secrets.h, then upload again.");
-        lastNotice = now;
-      }
-      vTaskDelay(pdMS_TO_TICKS(250));
-      continue;
     }
-    if (WiFi.status() != WL_CONNECTED) {
+    if (!wifiSetup.ready()) {
       networkReady.store(false);
       verified = false;
-      if (!connecting || now - lastConnect >= 15000) {
-        WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-        lastConnect = now;
-        connecting = true;
-        Serial.println("WIFI CONNECTING (2.4 GHz)...");
-      }
       vTaskDelay(pdMS_TO_TICKS(100));
       continue;
     }
@@ -318,12 +316,14 @@ void networkTask(void*) {
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Serial.printf("Cafeteria gate 1.3.0: %u sensor(s), automatic L0X/L1X detection\n", SENSOR_COUNT);
+  Serial.printf("Cafeteria gate %s: %u sensor(s), automatic L0X/L1X detection\n", FIRMWARE_VERSION, SENSOR_COUNT);
   snprintf(bootId, sizeof(bootId), "%08lx%08lx", static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()));
   Wire.begin(SDA_PIN, SCL_PIN, 100000);
   Wire.setTimeOut(25);
   eventQueue = xQueueCreate(32, sizeof(SensorEvent));
-  if (!eventQueue || xTaskCreate(networkTask, "sensor-network", 12288, nullptr, 1, nullptr) != pdPASS) {
+  if (!eventQueue ||
+      xTaskCreate(wifiSetupTask, "wifi-setup", 8192, nullptr, 1, nullptr) != pdPASS ||
+      xTaskCreate(networkTask, "sensor-network", 12288, nullptr, 1, nullptr) != pdPASS) {
     Serial.println("START FAILED: not enough memory. Press EN to retry.");
     while (true) delay(1000);
   }
