@@ -8,6 +8,8 @@ export type CafeteriaState = {
   serviceStartsAt: string;
   serviceEndsAt: string;
   lastSensorAt?: Date | null;
+  lastHeartbeatAt?: Date | null;
+  sensorsReady?: boolean;
   updatedAt?: Date | null;
 };
 
@@ -30,7 +32,24 @@ export const demoState: CafeteriaState = {
 };
 
 export function getCongestion(count: number) {
-  if (count <= 20) return { label: '여유로워요', short: '여유', color: 'emerald', progress: 28 } as const;
-  if (count <= 60) return { label: '조금 붐벼요', short: '보통', color: 'amber', progress: 62 } as const;
-  return { label: '많이 붐벼요', short: '혼잡', color: 'rose', progress: 88 } as const;
+  if (count <= 20)
+    return {
+      label: '여유로워요',
+      short: '여유',
+      color: 'emerald',
+      progress: 28,
+    } as const;
+  if (count <= 60)
+    return {
+      label: '조금 붐벼요',
+      short: '보통',
+      color: 'amber',
+      progress: 62,
+    } as const;
+  return {
+    label: '많이 붐벼요',
+    short: '혼잡',
+    color: 'rose',
+    progress: 88,
+  } as const;
 }

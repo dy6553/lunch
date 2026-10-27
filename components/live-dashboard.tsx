@@ -19,6 +19,7 @@ import {
   formatKoreanUpdateTime,
   getDashboardStatus,
   getQueueEstimate,
+  getSensorConnection,
 } from '@/lib/dashboard';
 import { useCafeteria } from '@/hooks/use-cafeteria';
 import { getKoreanDateKey, useDailyMenu } from '@/hooks/use-daily-menu';
@@ -36,12 +37,14 @@ export function LiveDashboard() {
     return () => window.clearInterval(timer);
   }, []);
 
+  const sensorConnection = getSensorConnection(state, now);
   const status = getDashboardStatus({
     loading,
     connected,
     hasData,
     demoMode,
     status: state.status,
+    sensorConnected: demoMode || sensorConnection.connected,
   });
   const showQueue = status.kind === 'open';
   const settingsReady = !loading && hasData && (connected || demoMode);
@@ -61,14 +64,16 @@ export function LiveDashboard() {
     : loading
       ? '연결 중'
       : connected && hasData
-        ? '데이터 연결됨'
+        ? sensorConnection.label
         : '연결 확인 필요';
   const updateText = demoMode
     ? '실제 급식실 정보가 아닌 미리보기예요.'
     : loading
       ? '급식실 정보를 불러오고 있어요.'
       : connected && hasData
-        ? formatKoreanUpdateTime(state.updatedAt, now)
+        ? state.lastHeartbeatAt
+          ? formatKoreanUpdateTime(state.lastHeartbeatAt, now)
+          : '센서가 연결되면 갱신 시각이 표시돼요.'
         : '연결이 복구되면 자동으로 갱신돼요.';
 
   return (
