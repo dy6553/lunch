@@ -170,10 +170,11 @@ process.env.SENSOR_DEVICE_KEY = 'legacy-test';
 const routePath = new URL('../app/api/sensor-event/route.ts', import.meta.url);
 const protocolPath = new URL('../lib/sensor-protocol.ts', import.meta.url).href;
 const cafeteriaPath = new URL('../lib/cafeteria.ts', import.meta.url).href;
+const visitorsPath = new URL('../lib/visitors.ts', import.meta.url).href;
 const source = readFileSync(routePath, 'utf8').replace(
   '@/lib/sensor-protocol',
   protocolPath,
-).replace('@/lib/cafeteria', cafeteriaPath);
+).replace('@/lib/cafeteria', cafeteriaPath).replace('@/lib/visitors', visitorsPath);
 const js = ts.transpileModule(source, {
   compilerOptions: {
     target: ts.ScriptTarget.ES2022,
@@ -488,4 +489,62 @@ test('turning counting back on does not backfill disabled events or their retrie
   const next = { ...passage, eventId: 'new-enabled-passage', uptimeMs: 2000, sequence: 2 };
   assert.equal((await (await post(next)).json()).waitingCountChanged, true);
   assert.equal(state.waitingCount.integerValue, '9');
+});
+
+test('accepted visitors accumulate separately from the queue and event retries count once', async () => {
+  for (const sensorMode of ['single', 'paired']) {
+    reset();
+    const state = docs.get('cafeterias/main').fields;
+    const entry = { ...event, sensorMode };
+    const first = sensorMode === 'paired'
+      ? { ...entry, sensorId: 'B', eventId: 'visitor-paired-1', uptimeMs: 1500 }
+      : entry;
+    if (sensorMode === 'paired') await post(entry);
+    await post(first);
+    assert.equal(state.dailyVisitorCount.integerValue, '1');
+    const started = state.visitorTrackingStartedAt.timestampValue;
+    assert.equal((await (await post(first)).json()).duplicate, true);
+    assert.equal(state.dailyVisitorCount.integerValue, '1');
+    // Serving/manual edits may clear the queue; accumulated visits must remain.
+    state.waitingCount.integerValue = '0';
+    const second = { ...entry, eventId: 'visitor-second-A', sequence: 3, uptimeMs: 2000 };
+    await post(second);
+    if (sensorMode === 'paired') await post({ ...second, sensorId: 'B', eventId: 'visitor-second-B', sequence: 4, uptimeMs: 2500 });
+    assert.equal(state.waitingCount.integerValue, '1');
+    assert.equal(state.dailyVisitorCount.integerValue, '2');
+    assert.equal(state.visitorTrackingStartedAt.timestampValue, started);
+  }
+});
+
+test('heartbeat, checks, unmatched/outbound events and disabled counting do not add visitors', async () => {
+  reset();
+  const state = docs.get('cafeterias/main').fields;
+  await post({ kind: 'check', deviceId });
+  await post({ kind: 'heartbeat', deviceId, sensorsReady: true });
+  await post({ ...event, sensorId: 'B' });
+  await post({ ...event, eventId: 'outbound-A', sequence: 2, uptimeMs: 1400 });
+  assert.equal(state.dailyVisitorCount, undefined);
+  state.sensorCountingEnabled = { booleanValue: false };
+  await post({ ...event, sensorMode: 'single', eventId: 'disabled-visit' });
+  assert.equal(state.dailyVisitorCount, undefined);
+});
+
+test('daily counter starts a new Korean day without losing its original tracking start', async () => {
+  reset();
+  const state = docs.get('cafeterias/main').fields;
+  state.dailyVisitorCount = { integerValue: '87' };
+  state.dailyVisitorDate = { stringValue: '2026-01-01' };
+  state.visitorTrackingStartedAt = { timestampValue: '2026-01-01T03:00:00Z' };
+  await post({ ...event, sensorMode: 'single' });
+  assert.equal(state.dailyVisitorCount.integerValue, '1');
+  assert.notEqual(state.dailyVisitorDate.stringValue, '2026-01-01');
+  assert.equal(state.visitorTrackingStartedAt.timestampValue, '2026-01-01T03:00:00Z');
+});
+
+test('transaction conflicts never publish a visitor count without a committed passage', async () => {
+  reset();
+  conflict = true;
+  const result = await post({ ...event, sensorMode: 'single' });
+  assert.equal(result.status, 503);
+  assert.equal(docs.get('cafeterias/main').fields.dailyVisitorCount, undefined);
 });

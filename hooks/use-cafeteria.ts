@@ -48,6 +48,10 @@ export function useCafeteria() {
               data.lastHeartbeatAt instanceof Timestamp
                 ? data.lastHeartbeatAt.toDate()
                 : null,
+            visitorTrackingStartedAt:
+              data.visitorTrackingStartedAt instanceof Timestamp
+                ? data.visitorTrackingStartedAt.toDate()
+                : null,
             sensorsReady: data.sensorsReady === true,
             sensorMode: data.sensorMode === 'single' ? 'single' : 'paired',
           } as CafeteriaState);
