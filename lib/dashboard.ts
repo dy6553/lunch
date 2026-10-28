@@ -7,6 +7,7 @@ type DashboardConnection = {
   demoMode: boolean;
   status: CafeteriaState['status'];
   sensorConnected?: boolean;
+  sensorCountingEnabled?: boolean;
 };
 
 export function getDashboardStatus({
@@ -16,6 +17,7 @@ export function getDashboardStatus({
   demoMode,
   status,
   sensorConnected,
+  sensorCountingEnabled = true,
 }: DashboardConnection) {
   if (loading)
     return {
@@ -46,7 +48,7 @@ export function getDashboardStatus({
       headline: '배식을 잠시 멈췄어요',
       description: '배식이 재개되면 예상 대기 시간을 다시 안내해 드려요.',
     } as const;
-  if (sensorConnected === false)
+  if (sensorCountingEnabled && sensorConnected === false)
     return {
       kind: 'sensor-waiting',
       label: '센서 연결 대기',

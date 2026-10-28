@@ -4,6 +4,7 @@ export type CafeteriaState = {
   waitingCount: number;
   serviceRatePerMinute: number;
   status: CafeteriaStatus;
+  sensorCountingEnabled?: boolean;
   autoDecreaseEnabled: boolean;
   serviceStartsAt: string;
   serviceEndsAt: string;
@@ -25,12 +26,31 @@ export const demoState: CafeteriaState = {
   waitingCount: 48,
   serviceRatePerMinute: 30,
   status: 'OPEN',
+  sensorCountingEnabled: true,
   autoDecreaseEnabled: true,
   serviceStartsAt: '12:00',
   serviceEndsAt: '13:20',
   lastSensorAt: new Date(),
   updatedAt: new Date(),
 };
+
+export function getSensorCountingEnabled(
+  state: Pick<CafeteriaState, 'status' | 'sensorCountingEnabled'>,
+) {
+  // Preserve the previous behavior until an administrator saves the new setting.
+  return state.sensorCountingEnabled ?? (state.status === 'OPEN');
+}
+
+export function getCafeteriaSettings(state: CafeteriaState) {
+  return {
+    status: state.status,
+    sensorCountingEnabled: getSensorCountingEnabled(state),
+    serviceRatePerMinute: state.serviceRatePerMinute,
+    autoDecreaseEnabled: state.autoDecreaseEnabled,
+    serviceStartsAt: state.serviceStartsAt,
+    serviceEndsAt: state.serviceEndsAt,
+  };
+}
 
 export function getCongestion(count: number) {
   if (count <= 20)

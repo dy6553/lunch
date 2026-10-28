@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { doc, onSnapshot, Timestamp } from 'firebase/firestore';
-import { demoState, type CafeteriaState } from '@/lib/cafeteria';
+import { demoState, getSensorCountingEnabled, type CafeteriaState } from '@/lib/cafeteria';
 import { db, isFirebaseConfigured } from '@/lib/firebase';
 
 export function useCafeteria() {
@@ -30,6 +30,12 @@ export function useCafeteria() {
           setState({
             ...demoState,
             ...data,
+            sensorCountingEnabled: getSensorCountingEnabled({
+              status: data.status ?? demoState.status,
+              sensorCountingEnabled: typeof data.sensorCountingEnabled === 'boolean'
+                ? data.sensorCountingEnabled
+                : undefined,
+            }),
             lastSensorAt:
               data.lastSensorAt instanceof Timestamp
                 ? data.lastSensorAt.toDate()
