@@ -2,26 +2,35 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
-import { doc, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
+import { doc, runTransaction, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 import { ArrowLeft, ImageUp, LoaderCircle, LogOut, Minus, Plus, RotateCcw, Save, Settings2, Sparkles, Utensils, Wifi } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { auth, db, isFirebaseConfigured } from '@/lib/firebase';
-import { type CafeteriaState } from '@/lib/cafeteria';
+import { getCafeteriaSettings, getSensorCountingEnabled, type CafeteriaState } from '@/lib/cafeteria';
+import { getQueueEstimate } from '@/lib/dashboard';
 import { useCafeteria } from '@/hooks/use-cafeteria';
 import { getKoreanDateKey, useDailyMenu } from '@/hooks/use-daily-menu';
 import { calendarWeekCount, cleanMenuCell, cleanOcrText, daysInMonth, ocrResultScore, weekdayCellForDay } from '@/lib/monthly-menu';
 import { getKoreanHoliday, isWeekendDate } from '@/lib/korean-holidays';
 
 export function AdminDashboard() {
-  const { state, connected } = useCafeteria();
+  const { state, connected, loading } = useCafeteria();
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [authReady, setAuthReady] = useState(!isFirebaseConfigured);
   const [message, setMessage] = useState('');
-  const [draft, setDraft] = useState<CafeteriaState>(state);
+  const [settingsDraft, setSettingsDraft] = useState<ReturnType<typeof getCafeteriaSettings> | null>(null);
+  const [countDraft, setCountDraft] = useState<number | null>(null);
+  const draft: CafeteriaState = {
+    ...state, ...settingsDraft,
+    ...(countDraft === null ? {} : { waitingCount: countDraft }),
+  };
+  const [saving, setSaving] = useState(false);
   const [menuDate, setMenuDate] = useState(getKoreanDateKey());
   const { menu } = useDailyMenu(menuDate);
-  const [menuText, setMenuText] = useState('');
+  const [menuDraft, setMenuDraft] = useState<{ date: string; text: string } | null>(null);
+  const menuText = menuDraft?.date === menuDate ? menuDraft.text : menu?.menuText ?? '';
+  function setMenuText(text: string) { setMenuDraft({ date: menuDate, text }); }
   const [menuImage, setMenuImage] = useState<File | null>(null);
   const [recognizing, setRecognizing] = useState(false);
   const [month, setMonth] = useState(getKoreanDateKey().slice(0, 7));
@@ -38,8 +47,6 @@ export function AdminDashboard() {
     return holidays;
   }, [month]);
 
-  useEffect(() => setDraft(state), [state]);
-  useEffect(() => setMenuText(menu?.menuText ?? ''), [menu]);
   useEffect(() => {
     if (!auth) return;
     return onAuthStateChanged(auth, async (nextUser) => {
@@ -74,13 +81,62 @@ export function AdminDashboard() {
     }
   }
 
-  async function save(next: CafeteriaState, successMessage = '변경사항을 저장했습니다.') {
-    setDraft(next);
+  function editSettings(patch: Partial<ReturnType<typeof getCafeteriaSettings>>) {
+    setSettingsDraft((previous) => ({ ...(previous ?? getCafeteriaSettings(state)), ...patch }));
+  }
+
+  async function saveSettings() {
     if (!db) { setMessage('미리보기에서 변경되었습니다. Firebase 연결 후 모든 기기에 반영됩니다.'); return; }
+    setSaving(true);
     try {
-      await setDoc(doc(db, 'cafeterias', 'main'), { ...next, updatedAt: serverTimestamp() }, { merge: true });
+      await runTransaction(db, async (transaction) => {
+        const reference = doc(db!, 'cafeterias', 'main');
+        const snapshot = await transaction.get(reference);
+        const data = snapshot.data();
+        const current = {
+          ...state, ...data,
+          updatedAt: data?.updatedAt?.toDate() ?? null,
+        } as CafeteriaState;
+        const timingChanged = !snapshot.exists() ||
+          current.status !== draft.status ||
+          current.autoDecreaseEnabled !== draft.autoDecreaseEnabled ||
+          current.serviceRatePerMinute !== draft.serviceRatePerMinute;
+        // A settings save must not replace a newer sensor count or heartbeat.
+        // Settle the estimate only when its timing/rate is actually changing.
+        transaction.set(reference, {
+          ...getCafeteriaSettings(draft),
+          ...(timingChanged ? {
+            waitingCount: getQueueEstimate(current, new Date()).count,
+            updatedAt: serverTimestamp(),
+          } : {}),
+        }, { merge: true });
+      });
+      setSettingsDraft(null);
+      setMessage('배식 운영과 센서 집계 설정을 저장했습니다.');
+    } catch { setMessage('저장하지 못했습니다. Firebase 권한을 확인해 주세요.'); }
+    finally { setSaving(false); }
+  }
+
+  async function saveCount(change: { delta: number } | { value: number }, successMessage = '대기 인원을 저장했습니다.') {
+    if (!db) {
+      setCountDraft(Math.max(0, 'value' in change ? change.value : draft.waitingCount + change.delta));
+      setMessage('미리보기에서 변경되었습니다. Firebase 연결 후 모든 기기에 반영됩니다.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const reference = doc(db!, 'cafeterias', 'main');
+        const snapshot = await transaction.get(reference);
+        const data = snapshot.data();
+        const current = { ...state, ...data, updatedAt: data?.updatedAt?.toDate() ?? null } as CafeteriaState;
+        const count = 'value' in change ? change.value : getQueueEstimate(current, new Date()).count + change.delta;
+        transaction.set(reference, { waitingCount: Math.max(0, count), updatedAt: serverTimestamp() }, { merge: true });
+      });
+      setCountDraft(null);
       setMessage(successMessage);
     } catch { setMessage('저장하지 못했습니다. Firebase 권한을 확인해 주세요.'); }
+    finally { setSaving(false); }
   }
 
   async function recognizeMenu() {
@@ -213,6 +269,8 @@ export function AdminDashboard() {
     return (
       <main className="grid min-h-screen place-items-center bg-background px-5 py-10">
         <Card className="w-full max-w-md gap-6 p-7 shadow-xl shadow-blue-950/5 sm:p-9">
+          {/* Native links avoid Vinext's client-navigation failure here. */}
+          {/* oxlint-disable-next-line nextjs/no-html-link-for-pages */}
           <a href="/" className="inline-flex items-center gap-2 text-sm font-bold text-muted-foreground hover:text-primary"><ArrowLeft className="size-4" /> 학생 화면으로</a>
           <div><span className="mb-4 grid size-12 place-items-center rounded-2xl bg-primary text-primary-foreground"><Settings2 className="size-5" /></span><h1 className="text-2xl font-black tracking-tight">관리자 로그인</h1><p className="mt-2 text-sm leading-relaxed text-muted-foreground">허용된 급식실 담당자 Google 계정으로 로그인해 주세요.</p></div>
           <div className="grid gap-4">
@@ -244,6 +302,7 @@ export function AdminDashboard() {
       <div className="mx-auto max-w-6xl">
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3"><span className="grid size-11 place-items-center rounded-2xl bg-primary text-primary-foreground"><Utensils className="size-5" /></span><div><p className="text-lg font-black tracking-tight">급식실 관리자</p><p className="text-xs font-semibold text-muted-foreground">실시간 운영 제어</p></div></div>
+          {/* oxlint-disable-next-line nextjs/no-html-link-for-pages */}
           <div className="flex items-center gap-2"><a href="/" className="inline-flex h-9 items-center gap-2 rounded-xl border bg-white px-3 text-xs font-bold hover:bg-muted"><ArrowLeft className="size-4" /> 학생 화면</a>{user && <button onClick={() => auth && signOut(auth)} className="grid size-9 place-items-center rounded-xl border bg-white hover:bg-muted" aria-label="로그아웃"><LogOut className="size-4" /></button>}</div>
         </header>
 
@@ -251,21 +310,22 @@ export function AdminDashboard() {
           <Card className="gap-6 bg-primary p-7 text-primary-foreground shadow-xl shadow-blue-950/10">
             <div className="flex items-center justify-between"><p className="text-sm font-bold text-blue-100">현재 대기 인원</p><span className="flex items-center gap-1.5 text-xs font-bold text-blue-100"><Wifi className="size-3.5" /> {connected ? '실시간 연결' : isFirebaseConfigured ? '연결 확인 중' : '미리보기'}</span></div>
             <div className="flex items-end gap-2"><strong className="text-8xl font-black leading-none tracking-[-0.08em]">{draft.waitingCount}</strong><span className="pb-2 text-xl font-black">명</span></div>
-            <div className="grid grid-cols-2 gap-3"><button onClick={() => save({ ...draft, waitingCount: Math.max(0, draft.waitingCount - 1) }, '대기 인원을 1명 줄였습니다.')} className="inline-flex h-14 items-center justify-center gap-2 rounded-2xl bg-white/12 text-lg font-black hover:bg-white/20"><Minus className="size-5" /> 1명</button><button onClick={() => save({ ...draft, waitingCount: draft.waitingCount + 1 }, '대기 인원을 1명 늘렸습니다.')} className="inline-flex h-14 items-center justify-center gap-2 rounded-2xl bg-white text-lg font-black text-primary hover:bg-blue-50"><Plus className="size-5" /> 1명</button></div>
-            <label className="grid gap-2 text-sm font-bold text-blue-100">직접 입력<input className="h-12 rounded-xl border-0 bg-white/12 px-4 text-lg font-black text-white outline-none ring-1 ring-white/20 focus:ring-2 focus:ring-white/50" type="number" min="0" value={draft.waitingCount} onChange={(e) => setDraft({ ...draft, waitingCount: Math.max(0, Number(e.target.value)) })} onBlur={() => save(draft)} /></label>
+            <div className="grid grid-cols-2 gap-3"><button disabled={saving || loading} onClick={() => saveCount({ delta: -1 }, '대기 인원을 1명 줄였습니다.')} className="inline-flex h-14 items-center justify-center gap-2 rounded-2xl bg-white/12 text-lg font-black hover:bg-white/20 disabled:opacity-50"><Minus className="size-5" /> 1명</button><button disabled={saving || loading} onClick={() => saveCount({ delta: 1 }, '대기 인원을 1명 늘렸습니다.')} className="inline-flex h-14 items-center justify-center gap-2 rounded-2xl bg-white text-lg font-black text-primary hover:bg-blue-50 disabled:opacity-50"><Plus className="size-5" /> 1명</button></div>
+            <label className="grid gap-2 text-sm font-bold text-blue-100">직접 입력<input disabled={saving || loading} className="h-12 rounded-xl border-0 bg-white/12 px-4 text-lg font-black text-white outline-none ring-1 ring-white/20 focus:ring-2 focus:ring-white/50" type="number" min="0" value={draft.waitingCount} onChange={(e) => setCountDraft(Math.max(0, Number(e.target.value)))} onBlur={() => { if (countDraft !== null) void saveCount({ value: countDraft }); }} /></label>
           </Card>
 
           <Card className="gap-6 p-7 shadow-sm">
-            <div><h1 className="text-xl font-black tracking-tight">운영 설정</h1><p className="mt-1 text-sm text-muted-foreground">변경하면 학생 화면에 바로 반영됩니다.</p></div>
-            <div className="grid gap-5 sm:grid-cols-2">
-              <label className="grid gap-2 text-sm font-bold">분당 배식 인원<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="number" min="1" max="120" value={draft.serviceRatePerMinute} onChange={(e) => setDraft({ ...draft, serviceRatePerMinute: Math.max(1, Number(e.target.value)) })} /></label>
-              <label className="grid gap-2 text-sm font-bold">운영 상태<select className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value as CafeteriaState['status'] })}><option value="OPEN">운영 중</option><option value="PAUSED">잠시 멈춤</option><option value="CLOSED">운영 종료</option></select></label>
-              <label className="grid gap-2 text-sm font-bold">급식 시작<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="time" value={draft.serviceStartsAt} onChange={(e) => setDraft({ ...draft, serviceStartsAt: e.target.value })} /></label>
-              <label className="grid gap-2 text-sm font-bold">급식 종료<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="time" value={draft.serviceEndsAt} onChange={(e) => setDraft({ ...draft, serviceEndsAt: e.target.value })} /></label>
-            </div>
-            <label className="flex items-center justify-between rounded-2xl bg-muted/70 p-4"><span><span className="block text-sm font-extrabold">시간에 따라 자동 감소</span><span className="mt-1 block text-xs text-muted-foreground">설정한 배식 속도로 대기 인원을 줄입니다.</span></span><input className="size-5 accent-primary" type="checkbox" checked={draft.autoDecreaseEnabled} onChange={(e) => setDraft({ ...draft, autoDecreaseEnabled: e.target.checked })} /></label>
-            <div className="flex flex-wrap gap-3"><button onClick={() => save(draft)} className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-5 text-sm font-extrabold text-primary-foreground hover:bg-primary/90"><Save className="size-4" /> 설정 저장</button><button onClick={() => { if (window.confirm('대기 인원을 0명으로 초기화할까요?')) save({ ...draft, waitingCount: 0 }, '대기 인원을 초기화했습니다.'); }} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-white px-5 text-sm font-extrabold hover:bg-muted"><RotateCcw className="size-4" /> 인원 초기화</button></div>
-            {message && <p className="rounded-xl bg-blue-50 px-4 py-3 text-sm font-bold text-blue-800" role="status">{message}</p>}
+            <div><h1 className="text-xl font-black tracking-tight">운영 설정</h1><p className="mt-1 text-sm text-muted-foreground">배식 운영과 센서 집계를 따로 설정하고 저장하세요.</p></div>
+            <fieldset disabled={saving || loading} className="grid gap-5 sm:grid-cols-2">
+              <label className="grid gap-2 text-sm font-bold">분당 배식 인원<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="number" min="1" max="120" value={draft.serviceRatePerMinute} onChange={(e) => editSettings({ serviceRatePerMinute: Math.max(1, Number(e.target.value)) })} /></label>
+              <label className="grid gap-2 text-sm font-bold">배식 운영 상태<select aria-label="배식 운영 상태" className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" value={draft.status} onChange={(e) => editSettings({ status: e.target.value as CafeteriaState['status'] })}><option value="OPEN">배식 중</option><option value="PAUSED">배식 일시 중지</option><option value="CLOSED">배식 전 / 종료</option></select></label>
+              <label className="grid gap-2 text-sm font-bold">급식 시작<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="time" value={draft.serviceStartsAt} onChange={(e) => editSettings({ serviceStartsAt: e.target.value })} /></label>
+              <label className="grid gap-2 text-sm font-bold">급식 종료<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="time" value={draft.serviceEndsAt} onChange={(e) => editSettings({ serviceEndsAt: e.target.value })} /></label>
+            </fieldset>
+            <label className="flex items-center justify-between gap-4 rounded-2xl bg-sky-50 p-4"><span><span className="block text-sm font-extrabold">센서 인원 집계 반영</span><span className="mt-1 block text-xs text-muted-foreground">켜면 센서 통과 인원을 대기 인원에 더합니다. 배식 시작 전에도 사용할 수 있어요.</span></span><input aria-label="센서 인원 집계 반영" disabled={saving || loading} className="size-5 shrink-0 accent-primary" type="checkbox" checked={getSensorCountingEnabled(draft)} onChange={(e) => editSettings({ sensorCountingEnabled: e.target.checked })} /></label>
+            <label className="flex items-center justify-between gap-4 rounded-2xl bg-muted/70 p-4"><span><span className="block text-sm font-extrabold">시간에 따라 자동 감소</span><span className="mt-1 block text-xs text-muted-foreground">배식 중에만 설정한 속도로 대기 인원을 줄입니다.</span></span><input aria-label="시간에 따라 자동 감소" disabled={saving || loading} className="size-5 shrink-0 accent-primary" type="checkbox" checked={draft.autoDecreaseEnabled} onChange={(e) => editSettings({ autoDecreaseEnabled: e.target.checked })} /></label>
+            <div className="flex flex-wrap gap-3"><button disabled={saving || loading} onClick={saveSettings} className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-5 text-sm font-extrabold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"><Save className="size-4" /> {saving ? '저장 중…' : '설정 저장'}</button><button disabled={saving || loading} onClick={() => { if (window.confirm('대기 인원을 0명으로 초기화할까요?')) void saveCount({ value: 0 }, '대기 인원을 초기화했습니다.'); }} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-white px-5 text-sm font-extrabold hover:bg-muted disabled:opacity-50"><RotateCcw className="size-4" /> 인원 초기화</button></div>
+            {message && <output className="block rounded-xl bg-blue-50 px-4 py-3 text-sm font-bold text-blue-800">{message}</output>}
           </Card>
         </div>
 

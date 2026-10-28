@@ -12,7 +12,7 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
-import { getCongestion } from '@/lib/cafeteria';
+import { getCongestion, getSensorCountingEnabled } from '@/lib/cafeteria';
 import { getPublishedMenuSource } from '@/lib/published-menus';
 import { parseMenuText } from '@/lib/menu-display';
 import {
@@ -38,6 +38,7 @@ export function LiveDashboard() {
   }, []);
 
   const sensorConnection = getSensorConnection(state, now);
+  const sensorCountingEnabled = getSensorCountingEnabled(state);
   const status = getDashboardStatus({
     loading,
     connected,
@@ -45,6 +46,7 @@ export function LiveDashboard() {
     demoMode,
     status: state.status,
     sensorConnected: demoMode || sensorConnection.connected,
+    sensorCountingEnabled,
   });
   const showQueue = status.kind === 'open';
   const settingsReady = !loading && hasData && (connected || demoMode);
@@ -64,14 +66,16 @@ export function LiveDashboard() {
     : loading
       ? '연결 중'
       : connected && hasData
-        ? sensorConnection.label
+        ? sensorCountingEnabled ? sensorConnection.label : '수동 인원 기준'
         : '연결 확인 필요';
   const updateText = demoMode
     ? '실제 급식실 정보가 아닌 미리보기예요.'
     : loading
       ? '급식실 정보를 불러오고 있어요.'
       : connected && hasData
-        ? state.lastHeartbeatAt
+        ? !sensorCountingEnabled
+          ? formatKoreanUpdateTime(state.updatedAt, now)
+          : state.lastHeartbeatAt
           ? formatKoreanUpdateTime(state.lastHeartbeatAt, now)
           : '센서가 연결되면 갱신 시각이 표시돼요.'
         : '연결이 복구되면 자동으로 갱신돼요.';
@@ -184,9 +188,11 @@ export function LiveDashboard() {
                       {showQueue ? waitText : status.headline}
                     </output>
                   </div>
-                  {(!showQueue || state.sensorMode === 'single') && (
+                  {(!showQueue || !sensorCountingEnabled || state.sensorMode === 'single') && (
                     <p className="mt-3 text-sm leading-relaxed text-blue-100">
-                      {state.sensorMode === 'single' && showQueue
+                      {showQueue && !sensorCountingEnabled
+                        ? '관리자가 입력한 인원과 배식 속도로 예상해요.'
+                        : state.sensorMode === 'single' && showQueue
                         ? '센서 1개로 통과를 집계한 추정 인원이에요. 입장과 퇴장은 구분하지 못해요.'
                         : status.description}
                     </p>
@@ -245,7 +251,7 @@ export function LiveDashboard() {
                       ? '배식 속도 확인 중'
                       : '배식 속도 확인 불가'}
                 </span>
-                <span>카메라 없이 센서로만 측정해요</span>
+                <span>{sensorCountingEnabled ? '카메라 없이 센서로만 측정해요' : '센서 인원 집계는 꺼져 있어요'}</span>
               </p>
             </div>
           </section>

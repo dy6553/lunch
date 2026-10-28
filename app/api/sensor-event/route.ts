@@ -6,6 +6,7 @@ import {
   pairSensorEvent,
   validSensorMessage,
 } from '@/lib/sensor-protocol';
+import { getSensorCountingEnabled, type CafeteriaStatus } from '@/lib/cafeteria';
 
 type FirestoreValue = {
   stringValue?: string;
@@ -356,7 +357,10 @@ export async function POST(request: Request) {
     ];
     const waitingCountChanged =
       (pair.direction === 'IN' || pair.direction === 'PASS') &&
-      stringField(cafeteria, 'status') === 'OPEN';
+      getSensorCountingEnabled({
+        status: stringField(cafeteria, 'status') as CafeteriaStatus,
+        sensorCountingEnabled: cafeteria.fields?.sensorCountingEnabled?.booleanValue,
+      });
     if (waitingCountChanged) {
       const baseCount = Math.max(0, intField(cafeteria, 'waitingCount'));
       const rate = Math.max(1, intField(cafeteria, 'serviceRatePerMinute', 30));
@@ -367,7 +371,8 @@ export async function POST(request: Request) {
       const elapsed = Number.isFinite(updatedAt)
         ? Math.max(0, (serverNow - updatedAt) / 60000)
         : 0;
-      const effectiveCount = boolField(cafeteria, 'autoDecreaseEnabled')
+      const effectiveCount = stringField(cafeteria, 'status') === 'OPEN' &&
+        boolField(cafeteria, 'autoDecreaseEnabled')
         ? Math.max(0, Math.ceil(baseCount - elapsed * rate))
         : baseCount;
       writes.push({

@@ -169,10 +169,11 @@ process.env.SENSOR_GATE_01_KEY_SHA256 = hash;
 process.env.SENSOR_DEVICE_KEY = 'legacy-test';
 const routePath = new URL('../app/api/sensor-event/route.ts', import.meta.url);
 const protocolPath = new URL('../lib/sensor-protocol.ts', import.meta.url).href;
+const cafeteriaPath = new URL('../lib/cafeteria.ts', import.meta.url).href;
 const source = readFileSync(routePath, 'utf8').replace(
   '@/lib/sensor-protocol',
   protocolPath,
-);
+).replace('@/lib/cafeteria', cafeteriaPath);
 const js = ts.transpileModule(source, {
   compilerOptions: {
     target: ts.ScriptTarget.ES2022,
@@ -447,4 +448,44 @@ test('single-sensor heartbeat reports initialized counter and visible mode witho
   assert.equal(state.sensorsReady.booleanValue, true);
   assert.equal(state.sensorMode.stringValue, 'single');
   assert.equal(state.waitingCount.integerValue, '8');
+});
+
+test('explicit sensor counting is independent of serving status in single and paired modes', async () => {
+  for (const mode of ['single', 'paired']) {
+    for (const status of ['OPEN', 'CLOSED', 'PAUSED']) {
+      for (const enabled of [false, true]) {
+        reset(status);
+        const state = docs.get('cafeterias/main').fields;
+        state.sensorCountingEnabled = { booleanValue: enabled };
+        state.autoDecreaseEnabled = { booleanValue: true };
+        state.updatedAt = { timestampValue: new Date(Date.now() - 60000).toISOString() };
+        let body = { ...event, sensorMode: mode };
+        if (mode === 'paired') {
+          await post(body);
+          body = { ...body, sensorId: 'B', eventId: 'paired-second', uptimeMs: 1500 };
+        }
+        const result = await (await post(body)).json();
+        assert.equal(result.waitingCountChanged, enabled, `${mode}/${status}/${enabled}`);
+        // Before/paused service preserves the full accumulated queue; only
+        // serving can consume the estimate before adding a newly counted entry.
+        assert.equal(state.waitingCount.integerValue, enabled ? (status === 'OPEN' ? '1' : '9') : '8');
+        assert.equal(state.status.stringValue, status);
+        assert.equal(state.sensorCountingEnabled.booleanValue, enabled);
+      }
+    }
+  }
+});
+
+test('turning counting back on does not backfill disabled events or their retries', async () => {
+  reset();
+  const state = docs.get('cafeterias/main').fields;
+  state.sensorCountingEnabled = { booleanValue: false };
+  const passage = { ...event, sensorMode: 'single' };
+  assert.equal((await (await post(passage)).json()).waitingCountChanged, false);
+  state.sensorCountingEnabled.booleanValue = true;
+  assert.equal((await (await post(passage)).json()).duplicate, true);
+  assert.equal(state.waitingCount.integerValue, '8');
+  const next = { ...passage, eventId: 'new-enabled-passage', uptimeMs: 2000, sequence: 2 };
+  assert.equal((await (await post(next)).json()).waitingCountChanged, true);
+  assert.equal(state.waitingCount.integerValue, '9');
 });

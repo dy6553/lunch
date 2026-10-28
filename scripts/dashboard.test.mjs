@@ -5,6 +5,7 @@ import {
   getDashboardStatus,
   getQueueEstimate,
 } from '../lib/dashboard.ts';
+import { getCafeteriaSettings, getSensorCountingEnabled } from '../lib/cafeteria.ts';
 
 const connection = {
   loading: false,
@@ -106,4 +107,33 @@ test('an older update includes its Korean calendar date across midnight', () => 
   assert.match(formatted, /10월 22일/);
   assert.match(formatted, /23:59:00/);
   assert.equal(formatKoreanUpdateTime(null, null), '갱신 시각 정보 없음');
+});
+
+test('legacy counting defaults to serving while explicit settings stay independent', () => {
+  for (const status of ['OPEN', 'PAUSED', 'CLOSED']) {
+    assert.equal(getSensorCountingEnabled({ status }), status === 'OPEN');
+    for (const enabled of [true, false]) {
+      assert.equal(getSensorCountingEnabled({ status, sensorCountingEnabled: enabled }), enabled);
+    }
+  }
+});
+
+test('operational settings exclude live queue values and sensor telemetry', () => {
+  const settings = getCafeteriaSettings({
+    ...state, sensorCountingEnabled: false,
+    lastHeartbeatAt: new Date(), sensorsReady: true,
+  });
+  assert.deepEqual(Object.keys(settings).sort(), [
+    'autoDecreaseEnabled', 'sensorCountingEnabled', 'serviceEndsAt',
+    'serviceRatePerMinute', 'serviceStartsAt', 'status',
+  ]);
+  assert.equal(settings.sensorCountingEnabled, false);
+});
+
+test('manual queue guidance works without a sensor only when sensor counting is disabled', () => {
+  assert.equal(getDashboardStatus({ ...connection, sensorConnected: false }).kind, 'sensor-waiting');
+  assert.equal(getDashboardStatus({ ...connection, sensorConnected: false, sensorCountingEnabled: false }).kind, 'open');
+  for (const status of ['CLOSED', 'PAUSED']) {
+    assert.equal(getDashboardStatus({ ...connection, status, sensorCountingEnabled: false }).kind, status === 'CLOSED' ? 'closed' : 'paused');
+  }
 });
