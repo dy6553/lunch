@@ -5,6 +5,9 @@ export type CafeteriaState = {
   serviceRatePerMinute: number;
   status: CafeteriaStatus;
   sensorCountingEnabled?: boolean;
+  dailyVisitorCount?: number;
+  dailyVisitorDate?: string;
+  visitorTrackingStartedAt?: Date | null;
   autoDecreaseEnabled: boolean;
   serviceStartsAt: string;
   serviceEndsAt: string;

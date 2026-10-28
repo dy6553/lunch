@@ -8,10 +8,11 @@
   "scripts": {
     "dev": "vinext dev",
     "build": "vinext build",
-    "vercel-build": "vite build",
+    "vercel-build": "npm test && vite build",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint",
-    "format": "oxfmt"
+    "format": "oxfmt",
+    "test": "node scripts/visitors.test.mjs && node scripts/sensor-protocol.test.mjs && node scripts/dashboard.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",

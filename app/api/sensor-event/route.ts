@@ -7,6 +7,7 @@ import {
   validSensorMessage,
 } from '@/lib/sensor-protocol';
 import { getSensorCountingEnabled, type CafeteriaStatus } from '@/lib/cafeteria';
+import { getNextDailyVisitors } from '@/lib/visitors';
 
 type FirestoreValue = {
   stringValue?: string;
@@ -362,6 +363,11 @@ export async function POST(request: Request) {
         sensorCountingEnabled: cafeteria.fields?.sensorCountingEnabled?.booleanValue,
       });
     if (waitingCountChanged) {
+      const visitors = getNextDailyVisitors({
+        dailyVisitorCount: cafeteria.fields?.dailyVisitorCount?.integerValue === undefined
+          ? undefined : intField(cafeteria, 'dailyVisitorCount'),
+        dailyVisitorDate: stringField(cafeteria, 'dailyVisitorDate'),
+      }, new Date(occurredAt));
       const baseCount = Math.max(0, intField(cafeteria, 'waitingCount'));
       const rate = Math.max(1, intField(cafeteria, 'serviceRatePerMinute', 30));
       const updatedAt = Date.parse(
@@ -380,12 +386,17 @@ export async function POST(request: Request) {
           name: documentName('cafeterias/main'),
           fields: {
             waitingCount: { integerValue: String(effectiveCount + 1) },
+            dailyVisitorCount: { integerValue: String(visitors.dailyVisitorCount) },
+            dailyVisitorDate: { stringValue: visitors.dailyVisitorDate },
           },
         },
-        updateMask: { fieldPaths: ['waitingCount'] },
+        updateMask: { fieldPaths: ['waitingCount', 'dailyVisitorCount', 'dailyVisitorDate'] },
         updateTransforms: [
           { fieldPath: 'updatedAt', setToServerValue: 'REQUEST_TIME' },
           { fieldPath: 'lastSensorAt', setToServerValue: 'REQUEST_TIME' },
+          ...(!cafeteria.fields?.visitorTrackingStartedAt?.timestampValue ? [
+            { fieldPath: 'visitorTrackingStartedAt', setToServerValue: 'REQUEST_TIME' },
+          ] : []),
         ],
       });
     } else {

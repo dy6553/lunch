@@ -14,6 +14,7 @@ import {
 import { Card } from '@/components/ui/card';
 import { getCongestion, getSensorCountingEnabled } from '@/lib/cafeteria';
 import { getPublishedMenuSource } from '@/lib/published-menus';
+import { getTodayVisitors } from '@/lib/visitors';
 import { parseMenuText } from '@/lib/menu-display';
 import {
   formatKoreanUpdateTime,
@@ -51,6 +52,14 @@ export function LiveDashboard() {
   const showQueue = status.kind === 'open';
   const settingsReady = !loading && hasData && (connected || demoMode);
   const estimate = getQueueEstimate(state, now);
+  const todayVisitors = getTodayVisitors(state, now);
+  const visitorText = loading ? '확인 중' : !settingsReady ? '확인 불가'
+    : todayVisitors === null ? '집계 대기' : `${todayVisitors.toLocaleString('ko-KR')}명`;
+  const visitorNote = !settingsReady ? '연결되면 오늘 집계 기록을 확인할 수 있어요.'
+    : todayVisitors === null ? '누적 집계가 시작되면 표시돼요.'
+    : !sensorCountingEnabled ? '센서 집계가 꺼져 있어 누적 인원을 유지하고 있어요.'
+    : !sensorConnection.connected ? '마지막 집계값이에요. 센서 연결을 확인하고 있어요.'
+    : '센서로 집계된 방문 기준 · 매일 0시부터 새로 집계';
   const congestion = getCongestion(estimate.count);
   const congestionColor =
     congestion.color === 'emerald'
@@ -199,6 +208,26 @@ export function LiveDashboard() {
                   )}
                 </div>
               </div>
+            </Card>
+
+            <Card aria-labelledby="daily-visitors-title" className="order-2 gap-2 px-5 py-4 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 id="daily-visitors-title" className="flex items-center gap-2 text-sm font-bold text-muted-foreground">
+                  <UsersRound aria-hidden="true" className="size-4" /> 오늘 누적 방문
+                </h2>
+                <output aria-label="오늘 누적 방문 인원" className="text-2xl font-extrabold tracking-tight tabular-nums">
+                  {visitorText}
+                </output>
+              </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">{visitorNote}</p>
+              {settingsReady && todayVisitors !== null && state.visitorTrackingStartedAt && (
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  집계 시작: {state.visitorTrackingStartedAt.toLocaleString('ko-KR', {
+                    timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric',
+                    hour: '2-digit', minute: '2-digit', hour12: false,
+                  })}
+                </p>
+              )}
             </Card>
 
             {showQueue && (
