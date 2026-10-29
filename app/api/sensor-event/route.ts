@@ -10,6 +10,7 @@ import {
 } from '@/lib/sensor-protocol';
 import { getSensorCountingEnabled, getSensorDistanceSettings, type CafeteriaStatus } from '@/lib/cafeteria';
 import { getNextDailyVisitors } from '@/lib/visitors';
+import { addTrafficEntry, cleanTrafficCounts, trafficDocumentPath, trafficSlot } from '@/lib/traffic';
 
 type FirestoreValue = {
   stringValue?: string;
@@ -17,6 +18,7 @@ type FirestoreValue = {
   doubleValue?: number;
   booleanValue?: boolean;
   timestampValue?: string;
+  mapValue?: { fields?: Record<string, FirestoreValue> };
 };
 
 type FirestoreDocument = {
@@ -102,6 +104,48 @@ async function getAccessToken() {
 
 function documentName(path: string) {
   return `projects/${PROJECT_ID}/databases/(default)/documents/${path}`;
+}
+
+function trafficObservationWrite(timestamp: number) {
+  const slot = trafficSlot(timestamp);
+  return {
+    update: { name: documentName(trafficDocumentPath(slot.date)), fields: {
+      date: { stringValue: slot.date }, intervalMinutes: { integerValue: '5' },
+    } },
+    updateMask: { fieldPaths: ['date', 'intervalMinutes'] },
+    updateTransforms: [
+      // A ready heartbeat proves an observed zero, but can never reset entries.
+      { fieldPath: `counts.${slot.key}`, maximum: { integerValue: '0' } },
+      { fieldPath: 'firstObservedMs', minimum: { integerValue: String(timestamp) } },
+      { fieldPath: 'lastObservedMs', maximum: { integerValue: String(timestamp) } },
+    ],
+  };
+}
+
+async function trafficEntryWrites(captureTimes: number[], transaction: string, token: string) {
+  const days = new Map<string, number[]>();
+  for (const capture of captureTimes) {
+    const date = trafficSlot(capture).date;
+    days.set(date, [...(days.get(date) ?? []), capture]);
+  }
+  return Promise.all([...days].map(async ([date, captures]) => {
+    const path = trafficDocumentPath(date);
+    const previous = await readDocument(path, transaction, token);
+    const fields = previous?.fields?.counts?.mapValue?.fields ?? {};
+    let counts = cleanTrafficCounts(Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, Number(value.integerValue)])));
+    for (const capture of captures) counts = addTrafficEntry(counts, capture);
+    return {
+      update: { name: documentName(path), fields: {
+        date: { stringValue: date }, intervalMinutes: { integerValue: '5' },
+        counts: { mapValue: { fields: Object.fromEntries(Object.entries(counts).map(([key, count]) => [key, { integerValue: String(count) }])) } },
+      } },
+      updateMask: { fieldPaths: ['date', 'intervalMinutes', 'counts'] },
+      updateTransforms: [
+        { fieldPath: 'firstObservedMs', minimum: { integerValue: String(Math.min(...captures)) } },
+        { fieldPath: 'lastObservedMs', maximum: { integerValue: String(Math.max(...captures)) } },
+      ],
+    };
+  }));
 }
 
 async function readDocument(
@@ -235,6 +279,10 @@ export async function POST(request: Request) {
         },
         body: JSON.stringify({
           writes: [
+            ...(body.sensorsReady && getSensorCountingEnabled({
+              status: stringField(cafeteria, 'status') as CafeteriaStatus,
+              sensorCountingEnabled: cafeteria.fields?.sensorCountingEnabled?.booleanValue,
+            }) ? [trafficObservationWrite(Date.now())] : []),
             {
               update: {
                 name: documentName('cafeterias/main'),
@@ -407,6 +455,7 @@ export async function POST(request: Request) {
       const countDelta = measurement ? measurement.passages.length : 1;
       let visitors = { dailyVisitorCount: cafeteria.fields?.dailyVisitorCount?.integerValue === undefined ? undefined : intField(cafeteria, 'dailyVisitorCount'), dailyVisitorDate: stringField(cafeteria, 'dailyVisitorDate') };
       const captureTimes = measurement ? measurement.passages.map(at => occurredAt - (body.uptimeMs! - at)) : [occurredAt];
+      writes.push(...await trafficEntryWrites(captureTimes, transaction, token));
       for (const capture of captureTimes) visitors = getNextDailyVisitors(visitors, new Date(capture));
       const baseCount = Math.max(0, intField(cafeteria, 'waitingCount'));
       const rate = Math.max(1, intField(cafeteria, 'serviceRatePerMinute', 30));
