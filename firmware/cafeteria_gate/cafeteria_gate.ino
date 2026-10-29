@@ -187,6 +187,8 @@ bool startSensors() {
 // Forward measurements only: all presence/pass counting runs on the server.
 void sampleRaw(DistanceSensor& sensor, BeamState& health) {
   static RawBatch batch{};
+  static RawBatch retained{};
+  static bool hasRetained = false;
   static uint64_t sentAt = 0;
   static uint16_t sentMm = 0;
   static uint8_t sentQuality = 255;
@@ -205,10 +207,17 @@ void sampleRaw(DistanceSensor& sensor, BeamState& health) {
     if (batch.frames[i].quality != quality || abs(int(batch.frames[i].mm) - int(mm)) > 20) unchanged = false;
   // Generic telemetry compression; it never classifies people or passages.
   if (!unchanged || batch.uptimeMs - sentAt >= 10000) {
+    // Preserve the latest skipped measurements before a signal change. This
+    // prevents compression from hiding a slow crossing near any web threshold.
+    if (!unchanged && hasRetained) {
+      retained.sequence = ++sequenceNumber;
+      if (xQueueSend(rawQueue, &retained, 0) != pdTRUE) droppedEvents.fetch_add(1);
+    }
+    hasRetained = false;
     batch.sequence = ++sequenceNumber;
     if (xQueueSend(rawQueue, &batch, 0) != pdTRUE) droppedEvents.fetch_add(1);
     else { sentAt = batch.uptimeMs; sentMm = mm; sentQuality = quality; }
-  }
+  } else { retained = batch; hasRetained = true; }
   batch = RawBatch{};
 }
 
@@ -396,6 +405,7 @@ void networkTask(void*) {
       char id[100];
       snprintf(id, sizeof(id), "%s-%s-raw-%lu", DEVICE_ID, bootId, static_cast<unsigned long>(raw.sequence));
       String json = baseMessage("distance") + ",\"eventId\":\"" + id + "\",\"sensorId\":\"A\",\"sequence\":" + String(raw.sequence) + ",\"uptimeMs\":" + uint64String(raw.uptimeMs) + ",\"occurredAtMs\":" + uint64String(raw.occurredAtMs ? raw.occurredAtMs : epochMs() - (uptimeMs() - raw.uptimeMs)) + ",\"frames\":[";
+      json.reserve(1200);
       for (uint8_t i = 0; i < raw.count; ++i) {
         if (i) json += ',';
         json += "[" + uint64String(raw.frames[i].at) + "," + String(raw.frames[i].mm) + "," + String(raw.frames[i].quality) + "]";
