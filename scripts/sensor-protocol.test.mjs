@@ -352,7 +352,7 @@ test('transaction conflicts are retryable failures rather than false duplicate s
 test('expired events and wrong credentials do not write to Firestore', async () => {
   reset();
   assert.equal(
-    (await post({ ...event, occurredAtMs: Date.now() - 60000 })).status,
+    (await post({ ...event, occurredAtMs: Date.now() - 300001 })).status,
     422,
   );
   assert.equal((await post(event, 'wrong-key')).status, 401);
@@ -483,6 +483,52 @@ test('new boot can count with a reset clock and disabled captures cannot be back
   const reboot = { ...first, bootId: 'ffffffffffffffff', uptimeMs: 100, eventId: 'reboot-capture' };
   assert.equal((await (await post(reboot)).json()).waitingCountChanged, true);
   assert.equal(state.waitingCount.integerValue, '10');
+});
+
+test('short offline buffers count once; old events and invalid diagnostics are rejected', async () => {
+  reset();
+  const buffered = { ...event, sensorMode: 'single', occurredAtMs: Date.now() - 120000 };
+  assert.equal((await (await post(buffered)).json()).waitingCountChanged, true);
+  assert.equal((await (await post(buffered)).json()).duplicate, true);
+  assert.equal((await post({ ...buffered, eventId: 'expired-buffer', occurredAtMs: Date.now() - 301000 })).status, 422);
+  const heartbeat = { kind: 'heartbeat', deviceId, sensorsReady: true,
+    pendingEvents: 12, droppedEvents: 2, wifiRssi: -65, firmwareVersion: '1.6.0' };
+  assert.equal((await post(heartbeat)).status, 200);
+  const fields = docs.get('cafeterias/main').fields;
+  assert.equal(fields.pendingEvents.integerValue, '12');
+  assert.equal(fields.droppedEvents.integerValue, '2');
+  assert.equal(fields.wifiRssi.integerValue, '-65');
+  assert.equal(fields.waitingCount.integerValue, '9');
+  for (const patch of [{pendingEvents: -1}, {pendingEvents: 130}, {wifiRssi: 4}, {droppedEvents: NaN}])
+    assert.equal(validSensorMessage({ ...heartbeat, ...patch }), false);
+});
+
+test('frequent arrivals preserve fractional service instead of resetting the consumption clock', async () => {
+  reset();
+  const fields = docs.get('cafeterias/main').fields;
+  fields.autoDecreaseEnabled = { booleanValue: true };
+  fields.serviceRatePerMinute = { integerValue: '10' };
+  const originalNow = Date.now;
+  const time = originalNow();
+  try {
+    Date.now = () => time;
+    for (let i = 1; i <= 6; i++) {
+      fields.updatedAt = { timestampValue: new Date(time - 1000).toISOString() };
+      assert.equal((await (await post({ ...event, sensorMode: 'single',
+        eventId: `frequent-arrival-${i}`, sequence: i, uptimeMs: i * 1000 })).json()).waitingCountChanged, true);
+    }
+    assert.equal(fields.waitingCount.integerValue, '13'); // 8 + 6 arrivals - 1 served
+    assert.ok(fields.serviceProgress.doubleValue < 0.000001);
+    assert.equal(fields.dailyVisitorCount.integerValue, '6');
+  } finally { Date.now = originalNow; }
+});
+
+test('fresh real sensor traffic keeps connectivity alive when a heartbeat is delayed', () => {
+  const now = new Date();
+  const state = { sensorsReady: true, lastHeartbeatAt: new Date(now.getTime() - 120000), lastSensorAt: now };
+  assert.equal(getSensorConnection(state, now).connected, true);
+  assert.equal(getSensorConnection({ ...state, lastSensorAt: new Date(now.getTime() - 40000) }, now).label, '센서 응답 지연');
+  assert.equal(getSensorConnection({ ...state, sensorsReady: false }, now).connected, false);
 });
 
 test('explicit sensor counting is independent of serving status in single and paired modes', async () => {

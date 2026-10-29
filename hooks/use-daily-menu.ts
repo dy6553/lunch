@@ -30,8 +30,12 @@ export function useDailyMenu(date = getKoreanDateKey()) {
     error: false,
   });
 
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!db) return;
+    let retryTimer: number | undefined;
+    const reconnect = () => setAttempt((value) => value + 1);
+    window.addEventListener('online', reconnect);
 
     const timeout = window.setTimeout(() => {
       const menu = getPublishedMenu(date);
@@ -59,15 +63,18 @@ export function useDailyMenu(date = getKoreanDateKey()) {
       },
       () => {
         window.clearTimeout(timeout);
+        retryTimer = window.setTimeout(reconnect, Math.min(30000, 1000 * 2 ** Math.min(attempt, 5)));
         const menu = getPublishedMenu(date);
         setResult({ date, menu, loading: false, error: !menu });
       },
     );
     return () => {
       window.clearTimeout(timeout);
+      window.clearTimeout(retryTimer);
+      window.removeEventListener('online', reconnect);
       unsubscribe();
     };
-  }, [date]);
+  }, [date, attempt]);
 
   // Never show yesterday's menu while the next Korean calendar date is loading.
   if (result.date === date) {

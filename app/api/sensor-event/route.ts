@@ -147,7 +147,7 @@ export async function GET() {
   return Response.json({
     ok: true,
     service: 'cafeteria-sensor-ingest',
-    version: 3,
+    version: 4,
     sensors: ['A', 'B'],
     sensorModes: ['single', 'paired'],
     configured: Boolean(
@@ -155,6 +155,8 @@ export async function GET() {
       process.env.FIREBASE_PRIVATE_KEY &&
       (process.env.SENSOR_DEVICE_KEY || process.env.SENSOR_GATE_01_KEY_SHA256),
     ),
+    duplicateGuardMs: 500,
+    maxEventAgeMs: MAX_EVENT_AGE_MS,
     minTransitMs: MIN_TRANSIT_MS,
     maxTransitMs: MAX_TRANSIT_MS,
   });
@@ -213,7 +215,7 @@ export async function POST(request: Request) {
         );
       return Response.json({
         ok: true,
-        version: 3,
+        version: 4,
         deviceId: body.deviceId,
         servingStatus: stringField(cafeteria, 'status'),
         datastoreReadable: true,
@@ -233,6 +235,9 @@ export async function POST(request: Request) {
                 name: documentName('cafeterias/main'),
                 fields: {
                   sensorsReady: { booleanValue: body.sensorsReady! },
+                  ...(body.pendingEvents !== undefined ? { pendingEvents: { integerValue: String(body.pendingEvents) } } : {}),
+                  ...(body.droppedEvents !== undefined ? { droppedEvents: { integerValue: String(body.droppedEvents) } } : {}),
+                  ...(body.wifiRssi !== undefined ? { wifiRssi: { integerValue: String(body.wifiRssi) } } : {}),
                   sensorDeviceId: { stringValue: body.deviceId },
                   sensorMode: { stringValue: body.sensorMode ?? 'paired' },
                   sensorFirmwareVersion: {
@@ -243,6 +248,9 @@ export async function POST(request: Request) {
               currentDocument: { exists: true },
               updateMask: {
                 fieldPaths: [
+                  ...(body.pendingEvents !== undefined ? ['pendingEvents'] : []),
+                  ...(body.droppedEvents !== undefined ? ['droppedEvents'] : []),
+                  ...(body.wifiRssi !== undefined ? ['wifiRssi'] : []),
                   'sensorsReady',
                   'sensorDeviceId',
                   'sensorMode',
@@ -397,20 +405,26 @@ export async function POST(request: Request) {
       const elapsed = Number.isFinite(updatedAt)
         ? Math.max(0, (serverNow - updatedAt) / 60000)
         : 0;
-      const effectiveCount = stringField(cafeteria, 'status') === 'OPEN' &&
-        boolField(cafeteria, 'autoDecreaseEnabled')
-        ? Math.max(0, Math.ceil(baseCount - elapsed * rate))
-        : baseCount;
+      const serving = stringField(cafeteria, 'status') === 'OPEN' &&
+        boolField(cafeteria, 'autoDecreaseEnabled');
+      const progressValue = cafeteria.fields?.serviceProgress;
+      const previousProgress = Number(progressValue?.doubleValue ?? progressValue?.integerValue ?? 0);
+      const consumed = serving ? elapsed * rate + (Number.isFinite(previousProgress) ? previousProgress : 0) : 0;
+      const departures = Math.floor(consumed + 1e-9);
+      const effectiveCount = Math.max(0, baseCount - departures);
+      // Carry fractional serving time through frequent sensor writes.
+      const serviceProgress = effectiveCount > 0 ? Math.max(0, consumed - departures) : 0;
       writes.push({
         update: {
           name: documentName('cafeterias/main'),
           fields: {
             waitingCount: { integerValue: String(effectiveCount + 1) },
+            serviceProgress: { doubleValue: serviceProgress },
             dailyVisitorCount: { integerValue: String(visitors.dailyVisitorCount) },
             dailyVisitorDate: { stringValue: visitors.dailyVisitorDate },
           },
         },
-        updateMask: { fieldPaths: ['waitingCount', 'dailyVisitorCount', 'dailyVisitorDate'] },
+        updateMask: { fieldPaths: ['waitingCount', 'serviceProgress', 'dailyVisitorCount', 'dailyVisitorDate'] },
         updateTransforms: [
           { fieldPath: 'updatedAt', setToServerValue: 'REQUEST_TIME' },
           { fieldPath: 'lastSensorAt', setToServerValue: 'REQUEST_TIME' },

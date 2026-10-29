@@ -7,7 +7,7 @@ import { ArrowLeft, ImageUp, LoaderCircle, LogOut, Minus, Plus, RotateCcw, Save,
 import { Card } from '@/components/ui/card';
 import { auth, db, isFirebaseConfigured } from '@/lib/firebase';
 import { getCafeteriaSettings, getSensorCountingEnabled, type CafeteriaState } from '@/lib/cafeteria';
-import { getQueueEstimate } from '@/lib/dashboard';
+import { getQueueEstimate, getSensorConnection } from '@/lib/dashboard';
 import { useCafeteria } from '@/hooks/use-cafeteria';
 import { getKoreanDateKey, useDailyMenu } from '@/hooks/use-daily-menu';
 import { calendarWeekCount, cleanMenuCell, cleanOcrText, daysInMonth, ocrResultScore, weekdayCellForDay } from '@/lib/monthly-menu';
@@ -26,6 +26,13 @@ export function AdminDashboard() {
     ...(countDraft === null ? {} : { waitingCount: countDraft }),
   };
   const [saving, setSaving] = useState(false);
+  const [now, setNow] = useState<Date | null>(null);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const sensorConnection = getSensorConnection(state, now);
+  const displayedCount = countDraft ?? getQueueEstimate(state, now).count;
   const [menuDate, setMenuDate] = useState(getKoreanDateKey());
   const { menu } = useDailyMenu(menuDate);
   const [menuDraft, setMenuDraft] = useState<{ date: string; text: string } | null>(null);
@@ -49,7 +56,10 @@ export function AdminDashboard() {
 
   useEffect(() => {
     if (!auth) return;
-    return onAuthStateChanged(auth, async (nextUser) => {
+    let revision = 0;
+    const unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
+      const currentRevision = ++revision;
+      setAuthReady(false);
       setUser(nextUser);
       if (!nextUser) {
         setIsAdmin(false);
@@ -59,13 +69,14 @@ export function AdminDashboard() {
 
       try {
         const token = await nextUser.getIdTokenResult(true);
-        setIsAdmin(token.claims.admin === true);
+        if (currentRevision === revision) setIsAdmin(token.claims.admin === true);
       } catch {
-        setIsAdmin(false);
+        if (currentRevision === revision) setIsAdmin(false);
       } finally {
-        setAuthReady(true);
+        if (currentRevision === revision) setAuthReady(true);
       }
     });
+    return () => { revision += 1; unsubscribe(); };
   }, []);
 
   async function login() {
@@ -107,6 +118,7 @@ export function AdminDashboard() {
           ...getCafeteriaSettings(draft),
           ...(timingChanged ? {
             waitingCount: getQueueEstimate(current, new Date()).count,
+            serviceProgress: 0,
             updatedAt: serverTimestamp(),
           } : {}),
         }, { merge: true });
@@ -131,7 +143,7 @@ export function AdminDashboard() {
         const data = snapshot.data();
         const current = { ...state, ...data, updatedAt: data?.updatedAt?.toDate() ?? null } as CafeteriaState;
         const count = 'value' in change ? change.value : getQueueEstimate(current, new Date()).count + change.delta;
-        transaction.set(reference, { waitingCount: Math.max(0, count), updatedAt: serverTimestamp() }, { merge: true });
+        transaction.set(reference, { waitingCount: Math.max(0, count), serviceProgress: 0, updatedAt: serverTimestamp() }, { merge: true });
       });
       setCountDraft(null);
       setMessage(successMessage);
@@ -141,17 +153,17 @@ export function AdminDashboard() {
 
   async function recognizeMenu() {
     if (!menuImage) { setMessage('먼저 메뉴판 사진을 선택해 주세요.'); return; }
+    let worker: import('tesseract.js').Worker | undefined;
     setRecognizing(true);
     setMessage('한글 인식 모델을 준비하고 있습니다. 처음에는 시간이 조금 걸릴 수 있습니다.');
     try {
       const { createWorker } = await import('tesseract.js');
-      const worker = await createWorker('kor+eng', undefined, {
+      worker = await createWorker('kor+eng', undefined, {
         logger: (progress) => {
           if (progress.status === 'recognizing text') setMessage(`메뉴 글자를 읽는 중입니다… ${Math.round(progress.progress * 100)}%`);
         },
       });
       const result = await worker.recognize(menuImage);
-      await worker.terminate();
       const text = cleanOcrText(result.data.text);
       if (!text) throw new Error('사진에서 글자를 찾지 못했습니다. 더 선명한 사진으로 시도해 주세요.');
       setMenuText(text);
@@ -159,19 +171,22 @@ export function AdminDashboard() {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '사진 인식에 실패했습니다.');
     } finally {
+      await worker?.terminate().catch(() => undefined);
       setRecognizing(false);
     }
   }
 
   async function recognizeMonth() {
     if (!monthImage) { setMessage('먼저 한 달 급식표 사진을 선택해 주세요.'); return; }
+    let worker: import('tesseract.js').Worker | undefined;
+    let bitmap: ImageBitmap | undefined;
     setRecognizingMonth(true);
     setMessage('고정밀 한글 OCR을 준비하고 있습니다…');
     try {
       const { createWorker, PSM } = await import('tesseract.js');
-      const worker = await createWorker('kor+eng');
+      worker = await createWorker('kor+eng');
       await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK, preserve_interword_spaces: '1' });
-      const bitmap = await createImageBitmap(monthImage);
+      bitmap = await createImageBitmap(monthImage);
       const weeks = calendarWeekCount(month);
       const cellWidth = bitmap.width / 5;
       const cellHeight = bitmap.height / weeks;
@@ -224,14 +239,14 @@ export function AdminDashboard() {
           setMonthConfidence({ ...confidences });
         }
       }
-      bitmap.close();
-      await worker.terminate();
       setMonthMenus(parsed);
       const count = Object.values(parsed).filter((value) => value.trim()).length;
       setMessage(`${count}일의 메뉴 초안을 만들었습니다. 날짜별 내용을 확인한 뒤 일괄 저장해 주세요.`);
     } catch {
       setMessage('급식표를 읽지 못했습니다. 더 선명하게 촬영하거나 날짜별 메뉴를 직접 입력해 주세요.');
     } finally {
+      bitmap?.close();
+      await worker?.terminate().catch(() => undefined);
       setRecognizingMonth(false);
     }
   }
@@ -306,25 +321,35 @@ export function AdminDashboard() {
           <div className="flex items-center gap-2"><a href="/" className="inline-flex h-9 items-center gap-2 rounded-xl border bg-white px-3 text-xs font-bold hover:bg-muted"><ArrowLeft className="size-4" /> 학생 화면</a>{user && <button onClick={() => auth && signOut(auth)} className="grid size-9 place-items-center rounded-xl border bg-white hover:bg-muted" aria-label="로그아웃"><LogOut className="size-4" /></button>}</div>
         </header>
 
-        <div className="mt-8 grid gap-5 lg:grid-cols-[0.8fr_1.2fr]">
+        <section aria-label="센서 진단" className="mt-6 rounded-2xl border bg-white p-4 text-sm">
+          <p className="font-extrabold">{sensorConnection.label}</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            {state.sensorMode === 'single' ? '센서 1개 · 통과 집계' : '센서 2개 · 방향 집계'}
+            {state.sensorFirmwareVersion ? ` · 펌웨어 ${state.sensorFirmwareVersion}` : ''}
+            {typeof state.wifiRssi === 'number' ? ` · Wi-Fi ${state.wifiRssi} dBm` : ''}
+          </p>
+          {typeof state.pendingEvents === 'number' && <p className="mt-2 text-xs">전송 대기 {state.pendingEvents}건 · 보드 시작 이후 누락 {state.droppedEvents ?? 0}건</p>}
+          {!sensorConnection.connected && <p className="mt-2 text-xs text-amber-800">보드 전원과 Wi-Fi를 확인해 주세요. 재연결되면 자동으로 갱신됩니다.</p>}
+        </section>
+        <div className="mt-5 grid gap-5 lg:grid-cols-[0.8fr_1.2fr]">
           <Card className="gap-6 bg-primary p-7 text-primary-foreground shadow-xl shadow-blue-950/10">
             <div className="flex items-center justify-between"><p className="text-sm font-bold text-blue-100">현재 대기 인원</p><span className="flex items-center gap-1.5 text-xs font-bold text-blue-100"><Wifi className="size-3.5" /> {connected ? '실시간 연결' : isFirebaseConfigured ? '연결 확인 중' : '미리보기'}</span></div>
-            <div className="flex items-end gap-2"><strong className="text-8xl font-black leading-none tracking-[-0.08em]">{draft.waitingCount}</strong><span className="pb-2 text-xl font-black">명</span></div>
-            <div className="grid grid-cols-2 gap-3"><button disabled={saving || loading} onClick={() => saveCount({ delta: -1 }, '대기 인원을 1명 줄였습니다.')} className="inline-flex h-14 items-center justify-center gap-2 rounded-2xl bg-white/12 text-lg font-black hover:bg-white/20 disabled:opacity-50"><Minus className="size-5" /> 1명</button><button disabled={saving || loading} onClick={() => saveCount({ delta: 1 }, '대기 인원을 1명 늘렸습니다.')} className="inline-flex h-14 items-center justify-center gap-2 rounded-2xl bg-white text-lg font-black text-primary hover:bg-blue-50 disabled:opacity-50"><Plus className="size-5" /> 1명</button></div>
-            <label className="grid gap-2 text-sm font-bold text-blue-100">직접 입력<input disabled={saving || loading} className="h-12 rounded-xl border-0 bg-white/12 px-4 text-lg font-black text-white outline-none ring-1 ring-white/20 focus:ring-2 focus:ring-white/50" type="number" min="0" value={draft.waitingCount} onChange={(e) => setCountDraft(Math.max(0, Number(e.target.value)))} onBlur={() => { if (countDraft !== null) void saveCount({ value: countDraft }); }} /></label>
+            <div className="flex items-end gap-2"><strong className="text-8xl font-black leading-none tracking-[-0.08em]">{displayedCount}</strong><span className="pb-2 text-xl font-black">명</span></div>
+            <div className="grid grid-cols-2 gap-3"><button disabled={saving || loading || (isFirebaseConfigured && !connected)} onClick={() => saveCount({ delta: -1 }, '대기 인원을 1명 줄였습니다.')} className="inline-flex h-14 items-center justify-center gap-2 rounded-2xl bg-white/12 text-lg font-black hover:bg-white/20 disabled:opacity-50"><Minus className="size-5" /> 1명</button><button disabled={saving || loading || (isFirebaseConfigured && !connected)} onClick={() => saveCount({ delta: 1 }, '대기 인원을 1명 늘렸습니다.')} className="inline-flex h-14 items-center justify-center gap-2 rounded-2xl bg-white text-lg font-black text-primary hover:bg-blue-50 disabled:opacity-50"><Plus className="size-5" /> 1명</button></div>
+            <label className="grid gap-2 text-sm font-bold text-blue-100">직접 입력<input disabled={saving || loading || (isFirebaseConfigured && !connected)} className="h-12 rounded-xl border-0 bg-white/12 px-4 text-lg font-black text-white outline-none ring-1 ring-white/20 focus:ring-2 focus:ring-white/50" type="number" min="0" value={displayedCount} onChange={(e) => setCountDraft(Math.max(0, Math.min(10000, Math.trunc(Number(e.target.value) || 0))))} onBlur={() => { if (countDraft !== null) void saveCount({ value: countDraft }); }} /></label>
           </Card>
 
           <Card className="gap-6 p-7 shadow-sm">
             <div><h1 className="text-xl font-black tracking-tight">운영 설정</h1><p className="mt-1 text-sm text-muted-foreground">배식 운영과 센서 집계를 따로 설정하고 저장하세요.</p></div>
-            <fieldset disabled={saving || loading} className="grid gap-5 sm:grid-cols-2">
-              <label className="grid gap-2 text-sm font-bold">분당 배식 인원<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="number" min="1" max="120" value={draft.serviceRatePerMinute} onChange={(e) => editSettings({ serviceRatePerMinute: Math.max(1, Number(e.target.value)) })} /></label>
+            <fieldset disabled={saving || loading || (isFirebaseConfigured && !connected)} className="grid gap-5 sm:grid-cols-2">
+              <label className="grid gap-2 text-sm font-bold">분당 배식 인원<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="number" min="1" max="120" value={draft.serviceRatePerMinute} onChange={(e) => editSettings({ serviceRatePerMinute: Math.max(1, Math.min(120, Math.trunc(Number(e.target.value) || 1))) })} /></label>
               <label className="grid gap-2 text-sm font-bold">배식 운영 상태<select aria-label="배식 운영 상태" className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" value={draft.status} onChange={(e) => editSettings({ status: e.target.value as CafeteriaState['status'] })}><option value="OPEN">배식 중</option><option value="PAUSED">배식 일시 중지</option><option value="CLOSED">배식 전 / 종료</option></select></label>
               <label className="grid gap-2 text-sm font-bold">급식 시작<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="time" value={draft.serviceStartsAt} onChange={(e) => editSettings({ serviceStartsAt: e.target.value })} /></label>
               <label className="grid gap-2 text-sm font-bold">급식 종료<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="time" value={draft.serviceEndsAt} onChange={(e) => editSettings({ serviceEndsAt: e.target.value })} /></label>
             </fieldset>
-            <label className="flex items-center justify-between gap-4 rounded-2xl bg-sky-50 p-4"><span><span className="block text-sm font-extrabold">센서 인원 집계 반영</span><span className="mt-1 block text-xs text-muted-foreground">켜면 센서 통과 인원을 대기 인원에 더합니다. 배식 시작 전에도 사용할 수 있어요.</span></span><input aria-label="센서 인원 집계 반영" disabled={saving || loading} className="size-5 shrink-0 accent-primary" type="checkbox" checked={getSensorCountingEnabled(draft)} onChange={(e) => editSettings({ sensorCountingEnabled: e.target.checked })} /></label>
-            <label className="flex items-center justify-between gap-4 rounded-2xl bg-muted/70 p-4"><span><span className="block text-sm font-extrabold">시간에 따라 자동 감소</span><span className="mt-1 block text-xs text-muted-foreground">배식 중에만 설정한 속도로 대기 인원을 줄입니다.</span></span><input aria-label="시간에 따라 자동 감소" disabled={saving || loading} className="size-5 shrink-0 accent-primary" type="checkbox" checked={draft.autoDecreaseEnabled} onChange={(e) => editSettings({ autoDecreaseEnabled: e.target.checked })} /></label>
-            <div className="flex flex-wrap gap-3"><button disabled={saving || loading} onClick={saveSettings} className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-5 text-sm font-extrabold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"><Save className="size-4" /> {saving ? '저장 중…' : '설정 저장'}</button><button disabled={saving || loading} onClick={() => { if (window.confirm('대기 인원을 0명으로 초기화할까요?')) void saveCount({ value: 0 }, '대기 인원을 초기화했습니다.'); }} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-white px-5 text-sm font-extrabold hover:bg-muted disabled:opacity-50"><RotateCcw className="size-4" /> 인원 초기화</button></div>
+            <label className="flex items-center justify-between gap-4 rounded-2xl bg-sky-50 p-4"><span><span className="block text-sm font-extrabold">센서 인원 집계 반영</span><span className="mt-1 block text-xs text-muted-foreground">켜면 센서 통과 인원을 대기 인원에 더합니다. 배식 시작 전에도 사용할 수 있어요.</span></span><input aria-label="센서 인원 집계 반영" disabled={saving || loading || (isFirebaseConfigured && !connected)} className="size-5 shrink-0 accent-primary" type="checkbox" checked={getSensorCountingEnabled(draft)} onChange={(e) => editSettings({ sensorCountingEnabled: e.target.checked })} /></label>
+            <label className="flex items-center justify-between gap-4 rounded-2xl bg-muted/70 p-4"><span><span className="block text-sm font-extrabold">시간에 따라 자동 감소</span><span className="mt-1 block text-xs text-muted-foreground">배식 중에만 설정한 속도로 대기 인원을 줄입니다.</span></span><input aria-label="시간에 따라 자동 감소" disabled={saving || loading || (isFirebaseConfigured && !connected)} className="size-5 shrink-0 accent-primary" type="checkbox" checked={draft.autoDecreaseEnabled} onChange={(e) => editSettings({ autoDecreaseEnabled: e.target.checked })} /></label>
+            <div className="flex flex-wrap gap-3"><button disabled={saving || loading || (isFirebaseConfigured && !connected)} onClick={saveSettings} className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-5 text-sm font-extrabold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"><Save className="size-4" /> {saving ? '저장 중…' : '설정 저장'}</button><button disabled={saving || loading || (isFirebaseConfigured && !connected)} onClick={() => { if (window.confirm('대기 인원을 0명으로 초기화할까요?')) void saveCount({ value: 0 }, '대기 인원을 초기화했습니다.'); }} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-white px-5 text-sm font-extrabold hover:bg-muted disabled:opacity-50"><RotateCcw className="size-4" /> 인원 초기화</button></div>
             {message && <output className="block rounded-xl bg-blue-50 px-4 py-3 text-sm font-bold text-blue-800">{message}</output>}
           </Card>
         </div>
@@ -333,7 +358,7 @@ export function AdminDashboard() {
           <div><h2 className="text-xl font-black tracking-tight">날짜별 급식 메뉴</h2><p className="mt-1 text-sm text-muted-foreground">메뉴판 사진을 올리면 음식 이름을 읽어옵니다. 인식 결과를 확인·수정한 뒤 저장해 주세요.</p></div>
           <div className="grid gap-5 lg:grid-cols-2">
             <div className="grid gap-4">
-              <label className="grid gap-2 text-sm font-bold">메뉴 날짜<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="date" value={menuDate} onChange={(event) => setMenuDate(event.target.value)} /></label>
+              <label className="grid gap-2 text-sm font-bold">메뉴 날짜<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="date" value={menuDate} disabled={recognizing} onChange={(event) => { if (event.target.value) setMenuDate(event.target.value); }} /></label>
               <label className="grid cursor-pointer gap-3 rounded-2xl border-2 border-dashed border-sky-200 bg-sky-50 p-5 text-center hover:border-primary">
                 <ImageUp className="mx-auto size-7 text-primary" />
                 <span className="text-sm font-extrabold">{menuImage ? menuImage.name : '메뉴판 사진 선택'}</span>
@@ -353,7 +378,7 @@ export function AdminDashboard() {
         <Card className="mt-5 gap-6 p-7 shadow-sm">
           <div><h2 className="text-xl font-black tracking-tight">한 달 급식표 일괄 등록</h2><p className="mt-1 text-sm text-muted-foreground">사진을 날짜별로 나눈 뒤 색상·대비가 다른 두 방식으로 한글을 읽고 더 정확한 결과를 선택합니다. 사진은 서버로 전송하거나 저장하지 않습니다.</p></div>
           <div className="grid gap-4 sm:grid-cols-[1fr_1.5fr_auto] sm:items-end">
-            <label className="grid gap-2 text-sm font-bold">급식표 월<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="month" value={month} onChange={(event) => { setMonth(event.target.value); setMonthMenus({}); setMonthConfidence({}); }} /></label>
+            <label className="grid gap-2 text-sm font-bold">급식표 월<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="month" value={month} disabled={recognizingMonth} onChange={(event) => { if (!event.target.value) return; setMonth(event.target.value); setMonthMenus({}); setMonthConfidence({}); }} /></label>
             <label className="grid cursor-pointer gap-2 rounded-xl border-2 border-dashed border-sky-200 bg-sky-50 px-4 py-3 text-center hover:border-primary"><span className="text-sm font-extrabold">{monthImage ? monthImage.name : '한 달 급식표 사진 선택'}</span><span className="text-xs text-muted-foreground">가급적 표 전체가 반듯하고 선명하게 나오도록 촬영해 주세요.</span><input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setMonthImage(event.target.files?.[0] ?? null)} /></label>
             <button type="button" disabled={!monthImage || recognizingMonth} onClick={recognizeMonth} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-sky-600 px-5 text-sm font-extrabold text-white hover:bg-sky-700 disabled:opacity-50">{recognizingMonth ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}{recognizingMonth ? '분석 중…' : '한 달치 읽기'}</button>
           </div>

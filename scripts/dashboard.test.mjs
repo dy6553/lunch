@@ -24,6 +24,13 @@ const state = {
   updatedAt: new Date('2026-10-22T03:30:00Z'),
 };
 
+test('fractional service carried through a sensor write agrees with the student estimate', () => {
+  const start = new Date('2026-10-22T03:30:00Z');
+  const data = { ...state, waitingCount: 9, serviceRatePerMinute: 10, serviceProgress: 0.9, updatedAt: start };
+  assert.equal(getQueueEstimate(data, new Date(start.getTime() + 1000)).count, 8);
+  assert.equal(getQueueEstimate({ ...data, waitingCount: 0 }, start).count, 0);
+});
+
 test('loading never exposes the initial OPEN status', () => {
   assert.equal(
     getDashboardStatus({ ...connection, loading: true }).kind,

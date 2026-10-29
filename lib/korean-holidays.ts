@@ -10,6 +10,6 @@ export function getKoreanHoliday(dateKey: string) {
 }
 
 export function isWeekendDate(dateKey: string) {
-  const day = new Date(`${dateKey}T12:00:00+09:00`).getDay();
+  const day = new Date(`${dateKey}T00:00:00Z`).getUTCDay();
   return day === 0 || day === 6;
 }

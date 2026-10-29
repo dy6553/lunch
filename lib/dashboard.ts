@@ -70,9 +70,13 @@ export function getDashboardStatus({
 }
 
 export function getSensorConnection(state: CafeteriaState, now: Date | null) {
-  if (!state.lastHeartbeatAt || !now)
+  const lastSeen = Math.max(
+    state.lastHeartbeatAt?.getTime() ?? 0,
+    state.lastSensorAt?.getTime() ?? 0,
+  );
+  if (!lastSeen || !now)
     return { connected: false, label: '센서 연결 대기' };
-  const age = now.getTime() - state.lastHeartbeatAt.getTime();
+  const age = now.getTime() - lastSeen;
   if (age > 90000 || age < -5000)
     return { connected: false, label: '센서 연결 끊김' };
   if (!state.sensorsReady)
@@ -80,6 +84,7 @@ export function getSensorConnection(state: CafeteriaState, now: Date | null) {
   return {
     connected: true,
     label:
+      age > 35000 ? '센서 응답 지연' :
       state.sensorMode === 'single' ? '센서 1개 · 통과 집계' : '센서 연결됨',
   };
 }
@@ -94,7 +99,7 @@ export function getQueueEstimate(state: CafeteriaState, now: Date | null) {
       : 0;
   const count = Math.max(
     0,
-    Math.ceil(state.waitingCount - elapsedMinutes * state.serviceRatePerMinute),
+    Math.ceil(state.waitingCount - (state.serviceProgress ?? 0) - elapsedMinutes * state.serviceRatePerMinute - 1e-9),
   );
   const minutes = count
     ? Math.max(1, Math.ceil(count / Math.max(1, state.serviceRatePerMinute)))

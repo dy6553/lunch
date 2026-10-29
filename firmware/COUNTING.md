@@ -1,4 +1,4 @@
-# Counting stability (firmware 1.5.0)
+# Counting stability (firmware 1.6.0)
 
 Single-sensor counting requires an initially clear beam, three stable blocked
 readings, then at least 500 ms of continuous clear readings. Short body gaps,
@@ -30,3 +30,12 @@ without a clear gap, and cannot determine direction. These timings intentionally
 merge brief gaps; adjust after observing real passages if necessary. Two-sensor
 mode retains A/B direction detection. Hardware calibration and ESP32 compilation
 must be checked with the installed board and libraries before operational use.
+
+Offline recovery in 1.6.0 stores at most 128 queued events plus the upload in
+flight in RAM for at most 5 minutes. Power loss clears RAM. Expired, rejected,
+and queue-overflow events increment a diagnostic drop counter. Heartbeats report
+pending/drop counts and RSSI every 10 seconds and on sensor readiness changes.
+VL53L1X out-of-range status is handled as a clear beam; valid clipped/unchecked
+ranges remain usable. Unknown/bad measurements never imply a clear beam.
+Transport loss for 5 seconds or unusable frames for 10 seconds triggers recovery.
+The queue estimate preserves fractional service progress across sensor writes.
