@@ -68,7 +68,7 @@ export function validSensorMessage(value: unknown): value is SensorMessage {
     if (b.sensorMode !== 'single' || b.sensorId !== 'A' || !b.bootId ||
       typeof b.eventId !== 'string' || !/^[A-Za-z0-9_-]{6,120}$/.test(b.eventId) ||
       !safeInteger(b.sequence, 0) || !safeInteger(b.uptimeMs, 0) || !safeInteger(b.occurredAtMs, 1) ||
-      !Array.isArray(b.frames) || !b.frames.length || b.frames.length > 40) return false;
+      !Array.isArray(b.frames) || !b.frames.length || b.frames.length > 200) return false;
     let last = -1;
     for (const frame of b.frames) {
       if (!Array.isArray(frame) || frame.length !== 3 || !safeInteger(frame[0], 0) || frame[0] <= last ||

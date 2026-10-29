@@ -678,3 +678,19 @@ test('transaction conflicts never publish a visitor count without a committed pa
   assert.equal(result.status, 503);
   assert.equal(docs.get('cafeterias/main').fields.dailyVisitorCount, undefined);
 });
+
+
+test('coalesced raw packets count every passage once and discard expired leading frames', async () => {
+  reset();
+  const frames = [...rawPassage, ...rawPassage.map(([t, mm, q]) => [t + 1380, mm, q])];
+  const batch = {...event, kind: 'distance', sensorMode: 'single', frames, uptimeMs: 2700, occurredAtMs: Date.now()};
+  assert.equal(validSensorMessage(batch), true);
+  assert.equal((await (await post(batch)).json()).waitingCountChanged, true);
+  assert.equal(docs.get('cafeterias/main').fields.waitingCount.integerValue, '10');
+  assert.equal(docs.get('cafeterias/main').fields.dailyVisitorCount.integerValue, '2');
+  assert.equal((await (await post(batch)).json()).duplicate, true);
+  reset();
+  const expired = {...batch, frames: [...rawPassage, ...Array.from({length: 10}, (_, i) => [400000 + i * 60, 2000, 1])], uptimeMs: 400540};
+  assert.equal((await (await post(expired)).json()).waitingCountChanged, false);
+  assert.equal(docs.get('cafeterias/main').fields.waitingCount.integerValue, '8');
+});
