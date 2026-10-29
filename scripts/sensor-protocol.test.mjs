@@ -392,7 +392,7 @@ test('single-sensor passages count once, retries are idempotent, and stale paire
     '9',
   );
   assert.equal(
-    docs.get('gateStates/main').fields.pendingSensor.stringValue,
+    docs.get(`gateStates/${deviceId}`).fields.pendingSensor.stringValue,
     '',
   );
   assert.equal((await (await post(passage)).json()).duplicate, true);
@@ -449,6 +449,40 @@ test('single-sensor heartbeat reports initialized counter and visible mode witho
   assert.equal(state.sensorsReady.booleanValue, true);
   assert.equal(state.sensorMode.stringValue, 'single');
   assert.equal(state.waitingCount.integerValue, '8');
+});
+
+test('one passage cannot increment twice through different IDs or delayed delivery', async () => {
+  reset();
+  const first = { ...event, sensorMode: 'single' };
+  assert.equal((await (await post(first)).json()).waitingCountChanged, true);
+  // A changed request ID does not make the same physical capture new.
+  assert.equal((await (await post({ ...first, eventId: 'renamed-capture' })).json()).duplicate, true);
+  const bounce = { ...first, eventId: 'body-gap-bounce', sequence: 2, uptimeMs: 1400 };
+  const suppressed = await (await post(bounce)).json();
+  assert.equal(suppressed.suppressed, true);
+  assert.equal(suppressed.waitingCountChanged, false);
+  assert.equal((await (await post(bounce)).json()).duplicate, true);
+  const late = { ...first, eventId: 'late-capture-01', uptimeMs: 1200 };
+  assert.equal((await (await post(late)).json()).reason, 'stale_capture');
+  const next = { ...first, eventId: 'next-person-01', sequence: 3, uptimeMs: 1500 };
+  assert.equal((await (await post(next)).json()).waitingCountChanged, true);
+  assert.equal(docs.get('cafeterias/main').fields.waitingCount.integerValue, '10');
+  assert.equal(docs.get('cafeterias/main').fields.dailyVisitorCount.integerValue, '2');
+});
+
+test('new boot can count with a reset clock and disabled captures cannot be backfilled', async () => {
+  reset();
+  const first = { ...event, sensorMode: 'single' };
+  await post(first);
+  const state = docs.get('cafeterias/main').fields;
+  state.sensorCountingEnabled = { booleanValue: false };
+  const disabled = { ...first, eventId: 'disabled-capture', uptimeMs: 2000 };
+  await post(disabled);
+  state.sensorCountingEnabled.booleanValue = true;
+  assert.equal((await (await post({ ...disabled, eventId: 'renamed-disabled' })).json()).duplicate, true);
+  const reboot = { ...first, bootId: 'ffffffffffffffff', uptimeMs: 100, eventId: 'reboot-capture' };
+  assert.equal((await (await post(reboot)).json()).waitingCountChanged, true);
+  assert.equal(state.waitingCount.integerValue, '10');
 });
 
 test('explicit sensor counting is independent of serving status in single and paired modes', async () => {

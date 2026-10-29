@@ -21,10 +21,12 @@ constexpr uint8_t XSHUT_B_PIN = 19;
 constexpr uint16_t DETECT_DISTANCE_MM = 900;
 constexpr uint16_t CLEAR_DISTANCE_MM = 1050;
 constexpr uint8_t STABLE_SAMPLES = 3;
+// A brief gap between an arm and torso must not re-arm the counter.
+constexpr uint32_t CLEAR_HOLD_MS = 500;
 constexpr uint32_t HEARTBEAT_MS = 20000;
 constexpr uint32_t MAX_EVENT_AGE_MS = 30000;
 constexpr char DEVICE_ID[] = "cafeteria-gate-01";
-constexpr char FIRMWARE_VERSION[] = "1.4.0";
+constexpr char FIRMWARE_VERSION[] = "1.5.0";
 WifiSetup wifiSetup;
 
 // Both supported chips can be used, including one of each in two-sensor mode.
@@ -85,6 +87,7 @@ struct BeamState {
   uint8_t blockedSamples = 0;
   uint8_t clearSamples = 0;
   uint32_t lastFrameMs = 0;
+  uint32_t clearSinceMs = 0;
 };
 struct SensorEvent {
   uint64_t uptimeMs;
@@ -133,7 +136,13 @@ void sampleBeam(DistanceSensor& sensor, BeamState& beam, char id) {
   uint16_t distance = 0;
   bool valid = false;
   bool noTarget = false;
-  if (!sensor.read(distance, valid, noTarget)) return;
+  if (!sensor.read(distance, valid, noTarget)) {
+    if (millis() - beam.lastFrameMs > 250) {
+      beam.blockedSamples = beam.clearSamples = 0;
+      beam.clearSinceMs = 0;
+    }
+    return;
+  }
   beam.lastFrameMs = millis();
   static uint32_t lastPrint[2] = {0, 0};
   const uint8_t index = id == 'A' ? 0 : 1;
@@ -145,10 +154,12 @@ void sampleBeam(DistanceSensor& sensor, BeamState& beam, char id) {
   if (noTarget) distance = CLEAR_DISTANCE_MM;
   else if (!valid) {
     beam.blockedSamples = beam.clearSamples = 0;
+    beam.clearSinceMs = 0;
     return;
   }
   if (distance > 0 && distance < DETECT_DISTANCE_MM) {
     beam.clearSamples = 0;
+    beam.clearSinceMs = 0;
     if (beam.blockedSamples < STABLE_SAMPLES) ++beam.blockedSamples;
     if (!beam.blocked && beam.blockedSamples >= STABLE_SAMPLES) {
       beam.blocked = true;
@@ -169,8 +180,10 @@ void sampleBeam(DistanceSensor& sensor, BeamState& beam, char id) {
     }
   } else if (distance >= CLEAR_DISTANCE_MM) {
     beam.blockedSamples = 0;
+    if (beam.clearSamples == 0) beam.clearSinceMs = millis();
     if (beam.clearSamples < STABLE_SAMPLES) ++beam.clearSamples;
-    if (beam.clearSamples >= STABLE_SAMPLES) {
+    if (beam.clearSamples >= STABLE_SAMPLES &&
+        millis() - beam.clearSinceMs >= CLEAR_HOLD_MS) {
       beam.blocked = false;
       beam.armed = true;
       if (SENSOR_COUNT == 1 && beam.pendingPassage) {
@@ -186,6 +199,7 @@ void sampleBeam(DistanceSensor& sensor, BeamState& beam, char id) {
     }
   } else {
     beam.blockedSamples = beam.clearSamples = 0;
+    beam.clearSinceMs = 0;
   }
 }
 

@@ -294,13 +294,21 @@ export async function POST(request: Request) {
     const eventPath = `sensorEvents/${body.eventId}`;
     if (await readDocument(eventPath, transaction, token))
       return Response.json({ ok: true, duplicate: true });
-    const gate = await readDocument('gateStates/main', transaction, token);
+    const gatePath = `gateStates/${body.deviceId}`;
+    const gate = await readDocument(gatePath, transaction, token);
     const cafeteria = await readDocument('cafeterias/main', transaction, token);
     if (!cafeteria)
       return Response.json(
         { ok: false, error: 'cafeteria_not_configured' },
         { status: 503 },
       );
+    // Persist the guard in the same transaction as the count. Capture uptime,
+    // rather than arrival time, keeps delayed/retried uploads deterministic.
+    const sameBoot = Boolean(body.bootId) &&
+      stringField(gate, 'guardBootId') === body.bootId;
+    const lastUptime = intField(gate, 'guardUptimeMs', -1);
+    if (sameBoot && body.uptimeMs !== undefined && body.uptimeMs <= lastUptime)
+      return Response.json({ ok: true, duplicate: true, reason: 'stale_capture' });
     const pair = pairSensorEvent(
       body,
       {
@@ -312,13 +320,17 @@ export async function POST(request: Request) {
       },
       occurredAt,
     );
+    const passage = pair.direction === 'IN' || pair.direction === 'PASS' || pair.direction === 'OUT';
+    const lastPassage = intField(gate, 'lastPassageUptimeMs', -1);
+    const bounce = passage && sameBoot && body.uptimeMs !== undefined &&
+      lastPassage >= 0 && body.uptimeMs - lastPassage < 500;
     const eventFields: Record<string, FirestoreValue> = {
       eventId: { stringValue: body.eventId },
       deviceId: { stringValue: body.deviceId },
       sensorId: { stringValue: body.sensorId },
       sensorMode: { stringValue: body.sensorMode ?? 'paired' },
       sequence: { integerValue: String(body.sequence) },
-      direction: { stringValue: pair.direction },
+      direction: { stringValue: bounce ? 'SUPPRESSED' : pair.direction },
       occurredAt: { timestampValue: new Date(occurredAt).toISOString() },
       transitMs: { integerValue: String(pair.transitMs ?? 0) },
       confidence: { doubleValue: body.confidence ?? 1 },
@@ -334,8 +346,13 @@ export async function POST(request: Request) {
       },
       {
         update: {
-          name: documentName('gateStates/main'),
+          name: documentName(gatePath),
           fields: {
+            guardBootId: { stringValue: body.bootId ?? '' },
+            guardUptimeMs: { integerValue: String(body.uptimeMs ?? 0) },
+            lastPassageUptimeMs: { integerValue: String(
+              passage && !bounce ? (body.uptimeMs ?? -1) : sameBoot ? lastPassage : -1,
+            ) },
             pendingSensor: { stringValue: pair.pending.sensor },
             pendingAt: { integerValue: String(pair.pending.at) },
             pendingDeviceId: { stringValue: pair.pending.deviceId },
@@ -346,6 +363,9 @@ export async function POST(request: Request) {
         },
         updateMask: {
           fieldPaths: [
+            'guardBootId',
+            'guardUptimeMs',
+            'lastPassageUptimeMs',
             'pendingSensor',
             'pendingAt',
             'pendingDeviceId',
@@ -357,7 +377,7 @@ export async function POST(request: Request) {
       },
     ];
     const waitingCountChanged =
-      (pair.direction === 'IN' || pair.direction === 'PASS') &&
+      !bounce && (pair.direction === 'IN' || pair.direction === 'PASS') &&
       getSensorCountingEnabled({
         status: stringField(cafeteria, 'status') as CafeteriaStatus,
         sensorCountingEnabled: cafeteria.fields?.sensorCountingEnabled?.booleanValue,
@@ -432,7 +452,8 @@ export async function POST(request: Request) {
     return Response.json({
       ok: true,
       duplicate: false,
-      direction: pair.direction,
+      direction: bounce ? 'SUPPRESSED' : pair.direction,
+      suppressed: bounce,
       waitingCountChanged,
       transitMs: pair.transitMs,
     });

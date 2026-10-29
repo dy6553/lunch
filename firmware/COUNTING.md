@@ -1,0 +1,32 @@
+# Counting stability (firmware 1.5.0)
+
+Single-sensor counting requires an initially clear beam, three stable blocked
+readings, then at least 500 ms of continuous clear readings. Short body gaps,
+invalid readings, and missing frames cannot re-arm the beam. A completed passage
+is queued once and retries retain the original event ID.
+
+The server serializes updates in a Firestore transaction and stores gate state
+per device. Within a boot session it rejects equal or older capture uptimes,
+even when the request ID changes. Completed passages less than 500 ms after
+the last accepted passage are recorded as SUPPRESSED, without changing either
+the queue or daily visitor count. Suppressed events do not extend the interval.
+Disabled counting still consumes captures, preventing later backfill.
+
+The 500 ms guard uses capture time, so network delays do not merge independently
+captured passages. Firmware installation is required for the 500 ms clear hold;
+the server guard also protects existing session-aware firmware.
+
+Keep the existing secrets.h (Wi-Fi, endpoint and device key) when replacing the
+sketch. Preserve SENSOR_COUNT=2 if using two sensors; the default is one sensor.
+Upload cafeteria_gate.ino with the existing ESP32 board and Pololu libraries.
+
+Validate on the physical installation: one passage, a pause in the beam, moving
+an arm while blocked, two people with a visible gap, and a network reconnect.
+The server tests simulate repeated IDs, changed IDs, bounce, delayed delivery,
+reboot, disabled counting, daily totals, and transaction conflicts.
+
+A single distance sensor cannot separate people walking side by side or people
+without a clear gap, and cannot determine direction. These timings intentionally
+merge brief gaps; adjust after observing real passages if necessary. Two-sensor
+mode retains A/B direction detection. Hardware calibration and ESP32 compilation
+must be checked with the installed board and libraries before operational use.
