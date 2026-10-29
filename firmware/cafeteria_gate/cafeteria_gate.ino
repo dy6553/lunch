@@ -26,7 +26,7 @@ constexpr uint32_t CLEAR_HOLD_MS = 500;
 constexpr uint32_t HEARTBEAT_MS = 10000;
 constexpr uint32_t MAX_EVENT_AGE_MS = 300000;
 constexpr char DEVICE_ID[] = "cafeteria-gate-01";
-constexpr char FIRMWARE_VERSION[] = "1.6.0";
+constexpr char FIRMWARE_VERSION[] = "1.6.1";
 WifiSetup wifiSetup;
 
 // Both supported chips can be used, including one of each in two-sensor mode.
@@ -114,6 +114,42 @@ uint64_t epochMs() {
 }
 bool clockReady() { return time(nullptr) >= 1735689600; }
 
+// A reset of the ESP32 does not reset a separately powered sensor when XSHUT
+// is unconnected. Restore its previous assigned address before library init.
+void recoverSingleSensorAddress() {
+  Wire.beginTransmission(0x29);
+  if (Wire.endTransmission() == 0) return;
+  for (uint8_t address = 0x30; address <= 0x31; ++address) {
+    Wire.beginTransmission(address);
+    if (Wire.endTransmission() != 0) continue;
+    Wire.beginTransmission(address);
+    Wire.write(uint8_t(0x01));
+    Wire.write(uint8_t(0x0F));
+    const bool selected = Wire.endTransmission(false) == 0;
+    uint16_t model = 0;
+    if (selected && Wire.requestFrom(address, uint8_t(2)) == 2) {
+      model = uint16_t(Wire.read()) << 8;
+      model |= Wire.read();
+    }
+    const bool l1 = model == 0xEACC;
+    if (!l1) {
+      Wire.beginTransmission(address);
+      Wire.write(uint8_t(0xC0));
+      if (Wire.endTransmission(false) != 0 ||
+          Wire.requestFrom(address, uint8_t(1)) != 1 || Wire.read() != 0xEE) continue;
+    }
+    Wire.beginTransmission(address);
+    if (l1) { Wire.write(uint8_t(0x00)); Wire.write(uint8_t(0x01)); }
+    else Wire.write(uint8_t(0x8A));
+    Wire.write(uint8_t(0x29));
+    if (Wire.endTransmission() == 0) {
+      Serial.printf("SENSOR ADDRESS RECOVERED: 0x%02X -> 0x29\n", address);
+      delay(10);
+      return;
+    }
+  }
+}
+
 bool startSensors() {
   // LOW disables the sensor. INPUT releases XSHUT to its carrier's pull-up;
   // never actively drive a 2.8 V XSHUT pin HIGH with the ESP32's 3.3 V output.
@@ -124,7 +160,10 @@ bool startSensors() {
   delay(10);
   pinMode(XSHUT_A_PIN, INPUT);
   delay(10);
-  if (SENSOR_COUNT == 1) pinMode(XSHUT_B_PIN, INPUT);
+  if (SENSOR_COUNT == 1) {
+    pinMode(XSHUT_B_PIN, INPUT);
+    recoverSingleSensorAddress();
+  }
   sensorA = DistanceSensor{};
   if (!sensorA.begin(0x30)) return false;
   if (SENSOR_COUNT == 2) {

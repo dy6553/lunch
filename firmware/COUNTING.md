@@ -1,4 +1,4 @@
-# Counting stability (firmware 1.6.0)
+# Counting stability (firmware 1.6.1)
 
 Single-sensor counting requires an initially clear beam, three stable blocked
 readings, then at least 500 ms of continuous clear readings. Short body gaps,
@@ -39,3 +39,9 @@ VL53L1X out-of-range status is handled as a clear beam; valid clipped/unchecked
 ranges remain usable. Unknown/bad measurements never imply a clear beam.
 Transport loss for 5 seconds or unusable frames for 10 seconds triggers recovery.
 The queue estimate preserves fractional service progress across sensor writes.
+
+In single-sensor mode, 1.6.1 also recovers the sensor's previous 0x30/0x31 I2C
+address before initialization when no device answers at 0x29. An ESP32 reset
+does not power-cycle the sensor if XSHUT is unconnected; without address
+recovery a previously working four-wire sensor can fail to initialize after
+an upload, reboot, or I2C retry. Model IDs are checked before restoring 0x29.
