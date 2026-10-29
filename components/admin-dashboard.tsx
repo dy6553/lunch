@@ -6,7 +6,7 @@ import { doc, runTransaction, serverTimestamp, setDoc, writeBatch } from 'fireba
 import { ArrowLeft, ImageUp, LoaderCircle, LogOut, Minus, Plus, RotateCcw, Save, Settings2, Sparkles, Utensils, Wifi } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { auth, db, isFirebaseConfigured } from '@/lib/firebase';
-import { getCafeteriaSettings, getSensorCountingEnabled, type CafeteriaState } from '@/lib/cafeteria';
+import { getCafeteriaSettings, getSensorCountingEnabled, getSensorDistanceSettings, type CafeteriaState } from '@/lib/cafeteria';
 import { getQueueEstimate, getSensorConnection } from '@/lib/dashboard';
 import { adjustDailyVisitors, getTodayVisitors } from '@/lib/visitors';
 import { useCafeteria } from '@/hooks/use-cafeteria';
@@ -358,6 +358,8 @@ export function AdminDashboard() {
             {typeof state.wifiRssi === 'number' ? ` · Wi-Fi ${state.wifiRssi} dBm` : ''}
           </p>
           {typeof state.pendingEvents === 'number' && <p className="mt-2 text-xs">전송 대기 {state.pendingEvents}건 · 보드 시작 이후 누락 {state.droppedEvents ?? 0}건</p>}
+          <p className="mt-2 text-xs">서버 판단 기준 {getSensorDistanceSettings(state).detectDistanceMm / 10}cm · {state.distanceProcessingMode === 'server' ? state.sensorProcessedDistanceMm === getSensorDistanceSettings(state).detectDistanceMm ? '서버 판단 적용 중' : '새 거리 수신 대기' : '거리 전송용 펌웨어 업데이트 필요'}</p>
+          {typeof state.lastRawDistanceMm === 'number' && <p className="mt-1 text-xs">최근 센서 거리: {state.lastRawDistanceMm >= 8190 ? '측정 범위 밖' : (state.lastRawDistanceMm / 10).toFixed(1) + 'cm'}</p>}
           {!sensorConnection.connected && <p className="mt-2 text-xs text-amber-800">보드 전원과 Wi-Fi를 확인해 주세요. 재연결되면 자동으로 갱신됩니다.</p>}
         </section>
         <div className="mt-5 grid gap-5 lg:grid-cols-[0.8fr_1.2fr]">
@@ -371,6 +373,7 @@ export function AdminDashboard() {
           <Card className="gap-6 p-7 shadow-sm">
             <div><h1 className="text-xl font-black tracking-tight">운영 설정</h1><p className="mt-1 text-sm text-muted-foreground">배식 운영과 센서 집계를 따로 설정하고 저장하세요.</p></div>
             <fieldset disabled={saving || loading || (isFirebaseConfigured && !connected)} className="grid gap-5 sm:grid-cols-2">
+              <label className="grid gap-2 text-sm font-bold">센서 감지 거리 (cm)<input aria-label="센서 감지 거리 (cm)" className="h-11 w-full min-w-0 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="number" min="10" max="200" step="1" value={getSensorDistanceSettings(draft).detectDistanceMm / 10} onChange={(event) => editSettings({ sensorDetectDistanceMm: Math.max(10, Math.min(200, Math.round(Number(event.target.value) || 150))) * 10 })} /><span className="text-xs font-normal leading-relaxed text-muted-foreground">10~200cm · 비워짐 기준 {getSensorDistanceSettings(draft).clearDistanceMm / 10}cm · 저장 후 다음 거리값부터 서버에서 적용 · 변경할 때는 센서 앞을 비워 주세요.</span></label>
               <label className="grid gap-2 text-sm font-bold">분당 배식 인원<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="number" min="1" max="120" value={draft.serviceRatePerMinute} onChange={(e) => editSettings({ serviceRatePerMinute: Math.max(1, Math.min(120, Math.trunc(Number(e.target.value) || 1))) })} /></label>
               <label className="grid gap-2 text-sm font-bold">배식 운영 상태<select aria-label="배식 운영 상태" className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" value={draft.status} onChange={(e) => editSettings({ status: e.target.value as CafeteriaState['status'] })}><option value="OPEN">배식 중</option><option value="PAUSED">배식 일시 중지</option><option value="CLOSED">배식 전 / 종료</option></select></label>
               <label className="grid gap-2 text-sm font-bold">급식 시작<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="time" value={draft.serviceStartsAt} onChange={(e) => editSettings({ serviceStartsAt: e.target.value })} /></label>

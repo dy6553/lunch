@@ -18,10 +18,12 @@ type ControlBase = {
   bootId?: string;
   firmwareVersion?: string;
 };
+export type DistanceBatch = Omit<SensorEvent, 'kind'> & { kind: 'distance'; sensorMode: 'single'; sensorId: 'A'; bootId: string; uptimeMs: number; occurredAtMs: number; frames: [number, number, number][] };
 export type SensorMessage =
+  | DistanceBatch
   | SensorEvent
   | (ControlBase & { kind: 'check' })
-  | (ControlBase & { kind: 'heartbeat'; sensorsReady: boolean; pendingEvents?: number; droppedEvents?: number; wifiRssi?: number });
+  | (ControlBase & { kind: 'heartbeat'; sensorsReady: boolean; pendingEvents?: number; droppedEvents?: number; wifiRssi?: number; appliedDetectDistanceMm?: number });
 export const MIN_TRANSIT_MS = 100;
 export const MAX_TRANSIT_MS = 8000;
 export const MAX_EVENT_AGE_MS = 300000;
@@ -62,8 +64,22 @@ export function validSensorMessage(value: unknown): value is SensorMessage {
     b.sensorMode !== 'paired'
   )
     return false;
+  if (b.kind === 'distance') {
+    if (b.sensorMode !== 'single' || b.sensorId !== 'A' || !b.bootId ||
+      typeof b.eventId !== 'string' || !/^[A-Za-z0-9_-]{6,120}$/.test(b.eventId) ||
+      !safeInteger(b.sequence, 0) || !safeInteger(b.uptimeMs, 0) || !safeInteger(b.occurredAtMs, 1) ||
+      !Array.isArray(b.frames) || !b.frames.length || b.frames.length > 40) return false;
+    let last = -1;
+    for (const frame of b.frames) {
+      if (!Array.isArray(frame) || frame.length !== 3 || !safeInteger(frame[0], 0) || frame[0] <= last ||
+        !safeInteger(frame[1], 0, 65535) || !safeInteger(frame[2], 0, 2)) return false;
+      last = frame[0];
+    }
+    return last === b.uptimeMs;
+  }
   if (b.kind === 'check') return true;
   if (b.kind === 'heartbeat') return typeof b.sensorsReady === 'boolean' &&
+    (b.appliedDetectDistanceMm === undefined || safeInteger(b.appliedDetectDistanceMm, 100, 2000)) &&
     (b.pendingEvents === undefined || safeInteger(b.pendingEvents, 0, 129)) &&
     (b.droppedEvents === undefined || safeInteger(b.droppedEvents, 0)) &&
     (b.wifiRssi === undefined || safeInteger(b.wifiRssi, -127, 0));

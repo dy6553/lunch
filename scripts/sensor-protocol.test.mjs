@@ -3,6 +3,7 @@ import test from 'node:test';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
+import { processDistanceFrames } from '../lib/distance-counter.ts';
 import {
   authorizeSensor,
   pairSensorEvent,
@@ -24,6 +25,23 @@ const event = {
 };
 const empty = { sensor: '', at: 0, deviceId: '', bootId: '', uptimeMs: 0 };
 const hash = createHash('sha256').update('local-test-device-key').digest('hex');
+
+const rawPassage = [
+  ...Array.from({length: 10}, (_, i) => [i * 60, 2000, 1]),
+  ...Array.from({length: 3}, (_, i) => [600 + i * 60, 1000, 1]),
+  ...Array.from({length: 10}, (_, i) => [780 + i * 60, 2000, 1]),
+];
+test('server distance state counts a full passage once across batches and resets on threshold changes', () => {
+  const first = processDistanceFrames(rawPassage.slice(0, 20), '', 1500);
+  assert.equal(first.passages.length, 0);
+  const last = processDistanceFrames(rawPassage.slice(20), JSON.stringify(first.state), 1500);
+  assert.deepEqual(last.passages, [1320]);
+  assert.equal(processDistanceFrames(rawPassage, JSON.stringify(last.state), 1500).passages.length, 0);
+  assert.equal(processDistanceFrames(rawPassage, '', 800).passages.length, 0);
+  assert.equal(processDistanceFrames(rawPassage.slice(13), JSON.stringify(first.state), 1200).passages.length, 0);
+  const invalid = rawPassage.map(frame => frame[0] >= 780 ? [frame[0], frame[1], 0] : frame);
+  assert.equal(processDistanceFrames(invalid, '', 1500).passages.length, 0);
+});
 
 test('input validation rejects invalid telemetry and partial session timestamps', () => {
   assert.equal(validSensorMessage(event), true);
@@ -171,10 +189,7 @@ const routePath = new URL('../app/api/sensor-event/route.ts', import.meta.url);
 const protocolPath = new URL('../lib/sensor-protocol.ts', import.meta.url).href;
 const cafeteriaPath = new URL('../lib/cafeteria.ts', import.meta.url).href;
 const visitorsPath = new URL('../lib/visitors.ts', import.meta.url).href;
-const source = readFileSync(routePath, 'utf8').replace(
-  '@/lib/sensor-protocol',
-  protocolPath,
-).replace('@/lib/cafeteria', cafeteriaPath).replace('@/lib/visitors', visitorsPath);
+const source = readFileSync(routePath, 'utf8').replaceAll('@/lib/sensor-protocol', protocolPath).replaceAll('@/lib/cafeteria', cafeteriaPath).replaceAll('@/lib/visitors', visitorsPath).replaceAll('@/lib/distance-counter', new URL('../lib/distance-counter.ts', import.meta.url).href);
 const js = ts.transpileModule(source, {
   compilerOptions: {
     target: ts.ScriptTarget.ES2022,
@@ -529,6 +544,41 @@ test('fresh real sensor traffic keeps connectivity alive when a heartbeat is del
   assert.equal(getSensorConnection(state, now).connected, true);
   assert.equal(getSensorConnection({ ...state, lastSensorAt: new Date(now.getTime() - 40000) }, now).label, '센서 응답 지연');
   assert.equal(getSensorConnection({ ...state, sensorsReady: false }, now).connected, false);
+});
+
+test('distance settings are returned on authenticated checks and heartbeats, with applied distance recorded', async () => {
+  reset();
+  const check = await (await post({kind: 'check', deviceId})).json();
+  assert.equal(check.detectDistanceMm, 1500);
+  assert.equal(check.clearDistanceMm, 1650);
+  const fields = docs.get('cafeterias/main').fields;
+  fields.sensorDetectDistanceMm = {integerValue: '1200'};
+  const result = await (await post({kind: 'heartbeat', deviceId, sensorsReady: true, appliedDetectDistanceMm: 1500})).json();
+  assert.equal(result.detectDistanceMm, 1200);
+  assert.equal(result.clearDistanceMm, 1350);
+  assert.equal(fields.sensorAppliedDistanceMm.integerValue, '1500');
+  assert.equal(fields.sensorDetectDistanceMm.integerValue, '1200');
+  assert.equal(fields.waitingCount.integerValue, '8');
+  assert.equal(validSensorMessage({kind: 'heartbeat', deviceId, sensorsReady: true, appliedDetectDistanceMm: 5000}), false);
+  fields.sensorDetectDistanceMm = {integerValue: '-1'};
+  assert.equal((await (await post({kind: 'check', deviceId})).json()).detectDistanceMm, 1500);
+});
+
+test('raw distance batches use the web threshold, update counts transactionally, and deduplicate retries', async () => {
+  reset();
+  const batch = {...event, kind: 'distance', sensorMode: 'single', frames: rawPassage, uptimeMs: 1320, occurredAtMs: Date.now()};
+  assert.equal(validSensorMessage(batch), true);
+  assert.equal((await (await post(batch)).json()).waitingCountChanged, true);
+  assert.equal(docs.get('cafeterias/main').fields.waitingCount.integerValue, '9');
+  assert.equal(docs.get('cafeterias/main').fields.dailyVisitorCount.integerValue, '1');
+  assert.equal(docs.get('cafeterias/main').fields.distanceProcessingMode.stringValue, 'server');
+  assert.equal((await (await post(batch)).json()).duplicate, true);
+  assert.equal(docs.get('cafeterias/main').fields.waitingCount.integerValue, '9');
+  reset();
+  docs.get('cafeterias/main').fields.sensorDetectDistanceMm = {integerValue: '800'};
+  assert.equal((await (await post(batch)).json()).waitingCountChanged, false);
+  assert.equal(docs.get('cafeterias/main').fields.waitingCount.integerValue, '8');
+  assert.equal(validSensorMessage({...batch, frames: [[1, 10, 1], [0, 10, 1]]}), false);
 });
 
 test('explicit sensor counting is independent of serving status in single and paired modes', async () => {

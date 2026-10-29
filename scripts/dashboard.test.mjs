@@ -5,7 +5,7 @@ import {
   getDashboardStatus,
   getQueueEstimate,
 } from '../lib/dashboard.ts';
-import { getCafeteriaSettings, getSensorCountingEnabled } from '../lib/cafeteria.ts';
+import { getCafeteriaSettings, getSensorCountingEnabled, getSensorDistanceSettings } from '../lib/cafeteria.ts';
 
 const connection = {
   loading: false,
@@ -23,6 +23,14 @@ const state = {
   serviceEndsAt: '13:05',
   updatedAt: new Date('2026-10-22T03:30:00Z'),
 };
+
+test('sensor distance defaults to 150 cm and accepts only supported integer settings', () => {
+  assert.deepEqual(getSensorDistanceSettings({}), {detectDistanceMm: 1500, clearDistanceMm: 1650});
+  assert.deepEqual(getSensorDistanceSettings({sensorDetectDistanceMm: 1200}), {detectDistanceMm: 1200, clearDistanceMm: 1350});
+  assert.deepEqual(getSensorDistanceSettings({sensorDetectDistanceMm: 2000}), {detectDistanceMm: 2000, clearDistanceMm: 2150});
+  for (const value of [0, -1, 99, 2001, 1200.5, NaN, Infinity, '1500'])
+    assert.equal(getSensorDistanceSettings({sensorDetectDistanceMm: value}).detectDistanceMm, 1500);
+});
 
 test('fractional service carried through a sensor write agrees with the student estimate', () => {
   const start = new Date('2026-10-22T03:30:00Z');
@@ -131,7 +139,7 @@ test('operational settings exclude live queue values and sensor telemetry', () =
     lastHeartbeatAt: new Date(), sensorsReady: true,
   });
   assert.deepEqual(Object.keys(settings).sort(), [
-    'autoDecreaseEnabled', 'sensorCountingEnabled', 'serviceEndsAt',
+    'autoDecreaseEnabled', 'sensorCountingEnabled', 'sensorDetectDistanceMm', 'serviceEndsAt',
     'serviceRatePerMinute', 'serviceStartsAt', 'status',
   ]);
   assert.equal(settings.sensorCountingEnabled, false);

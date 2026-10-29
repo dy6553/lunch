@@ -6,7 +6,9 @@ import ts from 'typescript';
 // Execute the real component's handlers with isolated auth/Firestore adapters.
 // No browser session, production data, or credentials are used.
 const visitorsUrl = new URL('../lib/visitors.ts', import.meta.url).href;
+const cafeteriaUrl = new URL('../lib/cafeteria.ts', import.meta.url).href;
 const mockSource = `
+export { getSensorDistanceSettings, getCafeteriaSettings } from ${JSON.stringify(cafeteriaUrl)};
 export { adjustDailyVisitors, getTodayVisitors } from ${JSON.stringify(visitorsUrl)};
 export const jsx = (type, props) => ({ type, props });
 export const jsxs = jsx;
@@ -31,7 +33,6 @@ export const writeBatch = () => { throw Error('Unexpected batch'); };
 export const useCafeteria = () => ({state: globalThis.__visitorHarness.initial, connected: globalThis.__visitorHarness.connected, loading: false});
 export const getQueueEstimate = state => ({count: state.waitingCount, minutes: 0});
 export const getSensorConnection = () => ({label: 'connected', connected: true});
-export const getCafeteriaSettings = state => state;
 export const getSensorCountingEnabled = () => true;
 export const getKoreanDateKey = () => '2026-10-29';
 export const useDailyMenu = () => ({menu: null});
@@ -50,7 +51,7 @@ const { AdminDashboard } = await import(`data:text/javascript;base64,${Buffer.fr
 
 function setup({retry = false, connected = true} = {}) {
   const today = new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
-  const initial = {dailyVisitorDate: today, dailyVisitorCount: 10, waitingCount: 14, lastHeartbeatAt: 'unchanged', visitorTrackingStartedAt: 'original', status: 'OPEN'};
+  const initial = {dailyVisitorDate: today, dailyVisitorCount: 10, waitingCount: 14, lastHeartbeatAt: 'unchanged', visitorTrackingStartedAt: 'original', status: 'OPEN', serviceRatePerMinute: 10, autoDecreaseEnabled: false, serviceStartsAt: '12:00', serviceEndsAt: '13:00', sensorDetectDistanceMm: 1000, sensorAppliedDistanceMm: 1000};
   const h = {
     index: 0, values: {0: {uid: 'test-admin'}, 1: true, 2: true, 7: '3', 9: new Date()}, results: {},
     initial, current: {...initial}, connected, committed: [], pending: /** @type {Promise<void>[]} */ ([]),
@@ -85,7 +86,7 @@ function setup({retry = false, connected = true} = {}) {
   const card = nodes(tree).find(node => node.props?.['aria-labelledby'] === 'admin-visitors-title');
   assert.ok(card, 'Daily visitor controls must render for an authenticated admin');
   const list = nodes(card);
-  return {h, form: list.find(n => n.type === 'form'), reset: list.find(n => n.type === 'button' && n.props.type === 'button'), submit: list.find(n => n.type === 'button' && n.props.type === 'submit')};
+  return {h, allNodes: nodes(tree), render: () => { h.index = 0; return nodes(AdminDashboard()); }, form: list.find(n => n.type === 'form'), reset: list.find(n => n.type === 'button' && n.props.type === 'button'), submit: list.find(n => n.type === 'button' && n.props.type === 'submit')};
 }
 
 test('admin subtract handler retries against a newer sensor count and preserves live fields', async () => {
@@ -118,6 +119,23 @@ test('offline admin controls are disabled and do not schedule an adjustment', ()
   assert.equal(submit.props.disabled, true);
   form.props.onSubmit({preventDefault() {}});
   assert.equal(h.pending.length, 0);
+});
+
+test('distance input saves the desired threshold while preserving the latest board acknowledgement and counts', async () => {
+  const {h, allNodes, render} = setup();
+  const input = allNodes.find(node => node.props?.['aria-label'] === '센서 감지 거리 (cm)');
+  assert.equal(input.props.value, 100);
+  input.props.onChange({target: {value: '150'}});
+  assert.equal(h.results[4].sensorDetectDistanceMm, 1500);
+  h.values[4] = h.results[4];
+  const nodes = render();
+  const save = nodes.find(node => node.type === 'button' && JSON.stringify(node.props.children).includes('설정 저장'));
+  await save.props.onClick();
+  assert.equal(h.current.sensorDetectDistanceMm, 1500);
+  assert.equal(h.current.sensorAppliedDistanceMm, 1000);
+  assert.equal(h.current.waitingCount, 14);
+  assert.equal(h.current.dailyVisitorCount, 10);
+  assert.equal(h.current.lastHeartbeatAt, 'unchanged');
 });
 
 test.after(() => { delete globalThis.__visitorHarness; delete globalThis.window; });
