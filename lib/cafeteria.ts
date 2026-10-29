@@ -2,6 +2,11 @@ export type CafeteriaStatus = 'OPEN' | 'PAUSED' | 'CLOSED';
 
 export type CafeteriaState = {
   waitingCount: number;
+  serviceProgress?: number;
+  pendingEvents?: number;
+  droppedEvents?: number;
+  wifiRssi?: number;
+  sensorFirmwareVersion?: string;
   serviceRatePerMinute: number;
   status: CafeteriaStatus;
   sensorCountingEnabled?: boolean;

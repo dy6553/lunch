@@ -147,7 +147,7 @@ export async function GET() {
   return Response.json({
     ok: true,
     service: 'cafeteria-sensor-ingest',
-    version: 3,
+    version: 4,
     sensors: ['A', 'B'],
     sensorModes: ['single', 'paired'],
     configured: Boolean(
@@ -155,6 +155,8 @@ export async function GET() {
       process.env.FIREBASE_PRIVATE_KEY &&
       (process.env.SENSOR_DEVICE_KEY || process.env.SENSOR_GATE_01_KEY_SHA256),
     ),
+    duplicateGuardMs: 500,
+    maxEventAgeMs: MAX_EVENT_AGE_MS,
     minTransitMs: MIN_TRANSIT_MS,
     maxTransitMs: MAX_TRANSIT_MS,
   });
@@ -213,7 +215,7 @@ export async function POST(request: Request) {
         );
       return Response.json({
         ok: true,
-        version: 3,
+        version: 4,
         deviceId: body.deviceId,
         servingStatus: stringField(cafeteria, 'status'),
         datastoreReadable: true,
@@ -233,6 +235,9 @@ export async function POST(request: Request) {
                 name: documentName('cafeterias/main'),
                 fields: {
                   sensorsReady: { booleanValue: body.sensorsReady! },
+                  ...(body.pendingEvents !== undefined ? { pendingEvents: { integerValue: String(body.pendingEvents) } } : {}),
+                  ...(body.droppedEvents !== undefined ? { droppedEvents: { integerValue: String(body.droppedEvents) } } : {}),
+                  ...(body.wifiRssi !== undefined ? { wifiRssi: { integerValue: String(body.wifiRssi) } } : {}),
                   sensorDeviceId: { stringValue: body.deviceId },
                   sensorMode: { stringValue: body.sensorMode ?? 'paired' },
                   sensorFirmwareVersion: {
@@ -243,6 +248,9 @@ export async function POST(request: Request) {
               currentDocument: { exists: true },
               updateMask: {
                 fieldPaths: [
+                  ...(body.pendingEvents !== undefined ? ['pendingEvents'] : []),
+                  ...(body.droppedEvents !== undefined ? ['droppedEvents'] : []),
+                  ...(body.wifiRssi !== undefined ? ['wifiRssi'] : []),
                   'sensorsReady',
                   'sensorDeviceId',
                   'sensorMode',
@@ -294,13 +302,21 @@ export async function POST(request: Request) {
     const eventPath = `sensorEvents/${body.eventId}`;
     if (await readDocument(eventPath, transaction, token))
       return Response.json({ ok: true, duplicate: true });
-    const gate = await readDocument('gateStates/main', transaction, token);
+    const gatePath = `gateStates/${body.deviceId}`;
+    const gate = await readDocument(gatePath, transaction, token);
     const cafeteria = await readDocument('cafeterias/main', transaction, token);
     if (!cafeteria)
       return Response.json(
         { ok: false, error: 'cafeteria_not_configured' },
         { status: 503 },
       );
+    // Persist the guard in the same transaction as the count. Capture uptime,
+    // rather than arrival time, keeps delayed/retried uploads deterministic.
+    const sameBoot = Boolean(body.bootId) &&
+      stringField(gate, 'guardBootId') === body.bootId;
+    const lastUptime = intField(gate, 'guardUptimeMs', -1);
+    if (sameBoot && body.uptimeMs !== undefined && body.uptimeMs <= lastUptime)
+      return Response.json({ ok: true, duplicate: true, reason: 'stale_capture' });
     const pair = pairSensorEvent(
       body,
       {
@@ -312,13 +328,17 @@ export async function POST(request: Request) {
       },
       occurredAt,
     );
+    const passage = pair.direction === 'IN' || pair.direction === 'PASS' || pair.direction === 'OUT';
+    const lastPassage = intField(gate, 'lastPassageUptimeMs', -1);
+    const bounce = passage && sameBoot && body.uptimeMs !== undefined &&
+      lastPassage >= 0 && body.uptimeMs - lastPassage < 500;
     const eventFields: Record<string, FirestoreValue> = {
       eventId: { stringValue: body.eventId },
       deviceId: { stringValue: body.deviceId },
       sensorId: { stringValue: body.sensorId },
       sensorMode: { stringValue: body.sensorMode ?? 'paired' },
       sequence: { integerValue: String(body.sequence) },
-      direction: { stringValue: pair.direction },
+      direction: { stringValue: bounce ? 'SUPPRESSED' : pair.direction },
       occurredAt: { timestampValue: new Date(occurredAt).toISOString() },
       transitMs: { integerValue: String(pair.transitMs ?? 0) },
       confidence: { doubleValue: body.confidence ?? 1 },
@@ -334,8 +354,13 @@ export async function POST(request: Request) {
       },
       {
         update: {
-          name: documentName('gateStates/main'),
+          name: documentName(gatePath),
           fields: {
+            guardBootId: { stringValue: body.bootId ?? '' },
+            guardUptimeMs: { integerValue: String(body.uptimeMs ?? 0) },
+            lastPassageUptimeMs: { integerValue: String(
+              passage && !bounce ? (body.uptimeMs ?? -1) : sameBoot ? lastPassage : -1,
+            ) },
             pendingSensor: { stringValue: pair.pending.sensor },
             pendingAt: { integerValue: String(pair.pending.at) },
             pendingDeviceId: { stringValue: pair.pending.deviceId },
@@ -346,6 +371,9 @@ export async function POST(request: Request) {
         },
         updateMask: {
           fieldPaths: [
+            'guardBootId',
+            'guardUptimeMs',
+            'lastPassageUptimeMs',
             'pendingSensor',
             'pendingAt',
             'pendingDeviceId',
@@ -357,7 +385,7 @@ export async function POST(request: Request) {
       },
     ];
     const waitingCountChanged =
-      (pair.direction === 'IN' || pair.direction === 'PASS') &&
+      !bounce && (pair.direction === 'IN' || pair.direction === 'PASS') &&
       getSensorCountingEnabled({
         status: stringField(cafeteria, 'status') as CafeteriaStatus,
         sensorCountingEnabled: cafeteria.fields?.sensorCountingEnabled?.booleanValue,
@@ -377,20 +405,26 @@ export async function POST(request: Request) {
       const elapsed = Number.isFinite(updatedAt)
         ? Math.max(0, (serverNow - updatedAt) / 60000)
         : 0;
-      const effectiveCount = stringField(cafeteria, 'status') === 'OPEN' &&
-        boolField(cafeteria, 'autoDecreaseEnabled')
-        ? Math.max(0, Math.ceil(baseCount - elapsed * rate))
-        : baseCount;
+      const serving = stringField(cafeteria, 'status') === 'OPEN' &&
+        boolField(cafeteria, 'autoDecreaseEnabled');
+      const progressValue = cafeteria.fields?.serviceProgress;
+      const previousProgress = Number(progressValue?.doubleValue ?? progressValue?.integerValue ?? 0);
+      const consumed = serving ? elapsed * rate + (Number.isFinite(previousProgress) ? previousProgress : 0) : 0;
+      const departures = Math.floor(consumed + 1e-9);
+      const effectiveCount = Math.max(0, baseCount - departures);
+      // Carry fractional serving time through frequent sensor writes.
+      const serviceProgress = effectiveCount > 0 ? Math.max(0, consumed - departures) : 0;
       writes.push({
         update: {
           name: documentName('cafeterias/main'),
           fields: {
             waitingCount: { integerValue: String(effectiveCount + 1) },
+            serviceProgress: { doubleValue: serviceProgress },
             dailyVisitorCount: { integerValue: String(visitors.dailyVisitorCount) },
             dailyVisitorDate: { stringValue: visitors.dailyVisitorDate },
           },
         },
-        updateMask: { fieldPaths: ['waitingCount', 'dailyVisitorCount', 'dailyVisitorDate'] },
+        updateMask: { fieldPaths: ['waitingCount', 'serviceProgress', 'dailyVisitorCount', 'dailyVisitorDate'] },
         updateTransforms: [
           { fieldPath: 'updatedAt', setToServerValue: 'REQUEST_TIME' },
           { fieldPath: 'lastSensorAt', setToServerValue: 'REQUEST_TIME' },
@@ -432,7 +466,8 @@ export async function POST(request: Request) {
     return Response.json({
       ok: true,
       duplicate: false,
-      direction: pair.direction,
+      direction: bounce ? 'SUPPRESSED' : pair.direction,
+      suppressed: bounce,
       waitingCountChanged,
       transitMs: pair.transitMs,
     });

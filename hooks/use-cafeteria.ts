@@ -15,8 +15,15 @@ export function useCafeteria() {
   const [loading, setLoading] = useState(isFirebaseConfigured);
   const [hasData, setHasData] = useState(!isFirebaseConfigured);
 
+  const [attempt, setAttempt] = useState(0);
+
   useEffect(() => {
     if (!db) return;
+    let retryTimer: number | undefined;
+    const reconnect = () => setAttempt((value) => value + 1);
+    const offline = () => setConnected(false);
+    window.addEventListener('online', reconnect);
+    window.addEventListener('offline', offline);
     // A slow or unavailable connection must not leave the page loading forever.
     const timeout = window.setTimeout(() => setLoading(false), 15000);
     const unsubscribe = onSnapshot(
@@ -57,20 +64,24 @@ export function useCafeteria() {
           } as CafeteriaState);
         }
         setHasData(snapshot.exists());
-        setConnected(!snapshot.metadata.fromCache);
+        setConnected(!snapshot.metadata.fromCache && navigator.onLine);
         setLoading(false);
       },
       () => {
         window.clearTimeout(timeout);
         setConnected(false);
         setLoading(false);
+        retryTimer = window.setTimeout(reconnect, Math.min(30000, 1000 * 2 ** Math.min(attempt, 5)));
       },
     );
     return () => {
       window.clearTimeout(timeout);
+      window.clearTimeout(retryTimer);
+      window.removeEventListener('online', reconnect);
+      window.removeEventListener('offline', offline);
       unsubscribe();
     };
-  }, []);
+  }, [attempt]);
 
   return {
     state,

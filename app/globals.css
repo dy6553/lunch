@@ -130,7 +130,7 @@ body {
   }
   body {
     @apply bg-background text-foreground;
-    min-width: 320px;
+    min-width: 0;
   }
   html {
     @apply font-sans;
