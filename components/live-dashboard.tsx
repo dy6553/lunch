@@ -12,6 +12,7 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
+import { TrafficTable } from '@/components/traffic-table';
 import { getCongestion, getSensorCountingEnabled } from '@/lib/cafeteria';
 import { getPublishedMenuSource } from '@/lib/published-menus';
 import { getTodayVisitors } from '@/lib/visitors';
@@ -372,7 +373,9 @@ export function LiveDashboard() {
           </div>
         </div>
 
-        <aside className="mb-3 flex items-start gap-2 border-t border-border/70 pt-3 text-muted-foreground">
+        <TrafficTable today={today} now={now} startsAt={state.serviceStartsAt} endsAt={state.serviceEndsAt} />
+
+        <aside className="mb-3 mt-5 flex items-start gap-2 border-t border-border/70 pt-3 text-muted-foreground">
           <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
           <p className="text-xs leading-relaxed">
             센서 집계와 예상 대기 시간은 실제와 다를 수 있어요. 현장 상황을 함께

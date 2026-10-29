@@ -12,7 +12,7 @@
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint",
     "format": "oxfmt",
-    "test": "node scripts/visitors.test.mjs && node scripts/sensor-protocol.test.mjs && node scripts/dashboard.test.mjs && node scripts/admin-visitors.test.mjs"
+    "test": "node scripts/visitors.test.mjs && node scripts/sensor-protocol.test.mjs && node scripts/dashboard.test.mjs && node scripts/admin-visitors.test.mjs && node scripts/traffic.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",

@@ -189,7 +189,7 @@ const routePath = new URL('../app/api/sensor-event/route.ts', import.meta.url);
 const protocolPath = new URL('../lib/sensor-protocol.ts', import.meta.url).href;
 const cafeteriaPath = new URL('../lib/cafeteria.ts', import.meta.url).href;
 const visitorsPath = new URL('../lib/visitors.ts', import.meta.url).href;
-const source = readFileSync(routePath, 'utf8').replaceAll('@/lib/sensor-protocol', protocolPath).replaceAll('@/lib/cafeteria', cafeteriaPath).replaceAll('@/lib/visitors', visitorsPath).replaceAll('@/lib/distance-counter', new URL('../lib/distance-counter.ts', import.meta.url).href);
+const source = readFileSync(routePath, 'utf8').replaceAll('@/lib/sensor-protocol', protocolPath).replaceAll('@/lib/cafeteria', cafeteriaPath).replaceAll('@/lib/visitors', visitorsPath).replaceAll('@/lib/distance-counter', new URL('../lib/distance-counter.ts', import.meta.url).href).replaceAll('@/lib/traffic', new URL('../lib/traffic.ts', import.meta.url).href);
 const js = ts.transpileModule(source, {
   compilerOptions: {
     target: ts.ScriptTarget.ES2022,
@@ -268,9 +268,19 @@ globalThis.fetch = async (input, options = {}) => {
       for (const transform of write.updateTransforms ??
         write.transform?.fieldTransforms ??
         []) {
-        doc.fields[transform.fieldPath] = {
-          timestampValue: new Date().toISOString(),
-        };
+        const keys = transform.fieldPath.split('.');
+        let parent = doc.fields;
+        for (const key of keys.slice(0, -1)) {
+          parent[key] ??= { mapValue: { fields: {} } };
+          parent = parent[key].mapValue.fields;
+        }
+        const key = keys.at(-1);
+        if (transform.maximum || transform.minimum) {
+          const next = Number((transform.maximum ?? transform.minimum).integerValue);
+          const old = parent[key]?.integerValue;
+          const value = old === undefined ? next : transform.maximum ? Math.max(Number(old), next) : Math.min(Number(old), next);
+          parent[key] = { integerValue: String(value) };
+        } else parent[key] = { timestampValue: new Date().toISOString() };
       }
       docs.set(path, doc);
     }
@@ -693,4 +703,69 @@ test('coalesced raw packets count every passage once and discard expired leading
   const expired = {...batch, frames: [...rawPassage, ...Array.from({length: 10}, (_, i) => [400000 + i * 60, 2000, 1])], uptimeMs: 400540};
   assert.equal((await (await post(expired)).json()).waitingCountChanged, false);
   assert.equal(docs.get('cafeterias/main').fields.waitingCount.integerValue, '8');
+});
+
+test('five-minute totals use capture times, preserve other bins and ignore duplicate events', async () => {
+  const realNow = Date.now;
+  let now = Date.parse('2026-10-29T03:34:59Z');
+  Date.now = () => now;
+  try {
+    reset();
+    const first = { ...event, sensorMode: 'single', occurredAtMs: now };
+    assert.equal((await post(first)).status, 200);
+    now += 2000;
+    const second = { ...first, eventId: 'traffic-second', uptimeMs: 3000, sequence: 2, occurredAtMs: now };
+    assert.equal((await post(second)).status, 200);
+    assert.equal((await (await post(second)).json()).duplicate, true);
+    const stats = docs.get('cafeterias/main-traffic-2026-10-29').fields;
+    assert.equal(stats.counts.mapValue.fields.b1230.integerValue, '1');
+    assert.equal(stats.counts.mapValue.fields.b1235.integerValue, '1');
+    const heartbeat = { kind: 'heartbeat', deviceId, sensorsReady: true };
+    await post(heartbeat);
+    assert.equal(stats.counts.mapValue.fields.b1235.integerValue, '1', 'ready heartbeat must not reset a counted interval');
+    now = Date.parse('2026-10-29T03:40:05Z');
+    await post(heartbeat);
+    assert.equal(stats.counts.mapValue.fields.b1240.integerValue, '0');
+    assert.equal(docs.get('cafeterias/main').fields.dailyVisitorCount.integerValue, '2');
+    assert.equal(stats.firstObservedMs.integerValue, String(Date.parse('2026-10-29T03:34:59Z')));
+    assert.equal(stats.lastObservedMs.integerValue, String(now));
+  } finally { Date.now = realNow; }
+});
+
+test('disabled counting, failed sensors and unmatched events never fabricate traffic records', async () => {
+  reset();
+  const state = docs.get('cafeterias/main').fields;
+  state.sensorCountingEnabled = { booleanValue: false };
+  await post({ ...event, sensorMode: 'single' });
+  await post({ kind: 'heartbeat', deviceId, sensorsReady: true });
+  state.sensorCountingEnabled.booleanValue = true;
+  await post({ kind: 'heartbeat', deviceId, sensorsReady: false });
+  await post({ ...event, eventId: 'traffic-unmatched', uptimeMs: 2000 });
+  assert.equal([...docs.keys()].some(key => key.startsWith('cafeterias/main-traffic-')), false);
+});
+
+test('batched raw-distance passages can populate two five-minute buckets and two Korean dates', async () => {
+  const realNow = Date.now;
+  const frames = [...rawPassage, ...rawPassage.map(([t, mm, q]) => [t + 1380, mm, q])];
+  try {
+    for (const now of [Date.parse('2026-10-29T03:35:00.700Z'), Date.parse('2026-10-29T15:00:00.700Z')]) {
+      Date.now = () => now;
+      reset();
+      const batch = { ...event, kind: 'distance', sensorMode: 'single', frames, uptimeMs: 2700, occurredAtMs: now };
+      assert.equal((await post(batch)).status, 200);
+      const records = [...docs.entries()].filter(([key]) => key.startsWith('cafeterias/main-traffic-'));
+      const values = records.flatMap(([, doc]) => Object.values(doc.fields.counts.mapValue.fields).map(value => Number(value.integerValue)));
+      assert.deepEqual(values, [1, 1]);
+      assert.equal(records.length, now === Date.parse('2026-10-29T15:00:00.700Z') ? 2 : 1);
+      assert.equal((await (await post(batch)).json()).duplicate, true);
+      assert.equal(docs.get('cafeterias/main').fields.waitingCount.integerValue, '10');
+    }
+  } finally { Date.now = realNow; }
+});
+
+test('a failed entry transaction cannot publish a five-minute total alone', async () => {
+  reset();
+  conflict = true;
+  assert.equal((await post({ ...event, sensorMode: 'single' })).status, 503);
+  assert.equal([...docs.keys()].some(key => key.startsWith('cafeterias/main-traffic-')), false);
 });
