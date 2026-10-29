@@ -89,6 +89,16 @@ export function getSensorConnection(state: CafeteriaState, now: Date | null) {
   };
 }
 
+export function getSensorDistanceDisplay(state: CafeteriaState, now: Date | null) {
+  const distance = state.lastRawDistanceMm;
+  const measured = typeof distance === 'number' && Number.isFinite(distance) && distance > 0;
+  const age = now && state.lastRawCapturedAt ? now.getTime() - state.lastRawCapturedAt.getTime() : Infinity;
+  return {
+    label: measured && age >= -5000 && age <= 10000 ? '현재 측정 거리' : '마지막 측정 거리',
+    value: !measured ? '측정 대기' : distance >= 8190 ? '측정 범위 밖' : `${(distance / 10).toFixed(1)}cm`,
+  };
+}
+
 export function getQueueEstimate(state: CafeteriaState, now: Date | null) {
   const elapsedMinutes =
     state.autoDecreaseEnabled &&

@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { TrafficTable } from '@/components/traffic-table';
-import { getCongestion, getSensorCountingEnabled } from '@/lib/cafeteria';
+import { getCongestion, getSensorCountingEnabled, getSensorDistanceSettings } from '@/lib/cafeteria';
 import { getPublishedMenuSource } from '@/lib/published-menus';
 import { getTodayVisitors } from '@/lib/visitors';
 import { parseMenuText } from '@/lib/menu-display';
@@ -22,6 +22,7 @@ import {
   getDashboardStatus,
   getQueueEstimate,
   getSensorConnection,
+  getSensorDistanceDisplay,
 } from '@/lib/dashboard';
 import { useCafeteria } from '@/hooks/use-cafeteria';
 import { getKoreanDateKey, useDailyMenu } from '@/hooks/use-daily-menu';
@@ -40,6 +41,7 @@ export function LiveDashboard() {
   }, []);
 
   const sensorConnection = getSensorConnection(state, now);
+  const sensorDistance = getSensorDistanceDisplay(state, now);
   const sensorCountingEnabled = getSensorCountingEnabled(state);
   const status = getDashboardStatus({
     loading,
@@ -272,6 +274,13 @@ export function LiveDashboard() {
               </Card>
             )}
             <div className="order-4 space-y-1.5 px-1 text-xs leading-relaxed text-muted-foreground">
+              <div aria-label="센서 인식 거리" className="mb-3 rounded-xl border bg-card px-4 py-3">
+                <p className="font-bold text-foreground">센서 인식 거리</p>
+                <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                  <div className="flex gap-1"><dt>{sensorDistance.label}</dt><dd aria-label="센서 측정 거리" className="font-bold text-foreground">{settingsReady ? sensorDistance.value : loading ? '확인 중' : '확인 불가'}</dd></div>
+                  <div className="flex gap-1"><dt>인식 기준</dt><dd aria-label="센서 인식 기준" className="font-bold text-foreground">{settingsReady ? `${getSensorDistanceSettings(state).detectDistanceMm / 10}cm` : '확인 중'}</dd></div>
+                </dl>
+              </div>
               <p>{updateText}</p>
               <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className="inline-flex items-center gap-1.5">

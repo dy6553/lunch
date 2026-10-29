@@ -4,6 +4,7 @@ import {
   formatKoreanUpdateTime,
   getDashboardStatus,
   getQueueEstimate,
+  getSensorDistanceDisplay,
 } from '../lib/dashboard.ts';
 import { getCafeteriaSettings, getSensorCountingEnabled, getSensorDistanceSettings } from '../lib/cafeteria.ts';
 
@@ -23,6 +24,15 @@ const state = {
   serviceEndsAt: '13:05',
   updatedAt: new Date('2026-10-22T03:30:00Z'),
 };
+
+test('sensor distance displays fresh readings, retained stale readings and unavailable ranges truthfully', () => {
+  const now = new Date('2026-10-29T03:00:00Z');
+  const reading = { ...state, lastRawDistanceMm: 423, lastRawCapturedAt: now };
+  assert.deepEqual(getSensorDistanceDisplay(reading, now), { label: '현재 측정 거리', value: '42.3cm' });
+  assert.equal(getSensorDistanceDisplay(reading, new Date(now.getTime() + 11000)).label, '마지막 측정 거리');
+  assert.equal(getSensorDistanceDisplay({ ...reading, lastRawDistanceMm: 8190 }, now).value, '측정 범위 밖');
+  for (const value of [undefined, 0, -1, NaN]) assert.equal(getSensorDistanceDisplay({ ...reading, lastRawDistanceMm: value }, now).value, '측정 대기');
+});
 
 test('sensor distance defaults to 150 cm and accepts only supported integer settings', () => {
   assert.deepEqual(getSensorDistanceSettings({}), {detectDistanceMm: 1500, clearDistanceMm: 1650});
