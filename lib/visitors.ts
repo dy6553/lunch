@@ -40,3 +40,19 @@ export function getTodayVisitors(current: DailyVisitors, now: Date | null) {
   if (current.dailyVisitorDate > today) return null;
   return current.dailyVisitorDate === today ? current.dailyVisitorCount : 0;
 }
+
+export function adjustDailyVisitors(
+  current: DailyVisitors,
+  change: { subtract: number } | { reset: true },
+  now: Date,
+) {
+  if ('subtract' in change && (!Number.isSafeInteger(change.subtract) || change.subtract <= 0))
+    throw new Error('줄일 인원을 1명 이상의 정수로 입력해 주세요.');
+  const today = getVisitorDate(now);
+  if (validDate(current.dailyVisitorDate) && current.dailyVisitorDate > today)
+    throw new Error('집계 날짜를 확인한 뒤 다시 시도해 주세요.');
+  return {
+    dailyVisitorDate: today,
+    dailyVisitorCount: 'reset' in change ? 0 : Math.max(0, (getTodayVisitors(current, now) ?? 0) - change.subtract),
+  };
+}
