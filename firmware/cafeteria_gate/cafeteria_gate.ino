@@ -26,7 +26,7 @@ constexpr uint32_t CLEAR_HOLD_MS = 500;
 constexpr uint32_t HEARTBEAT_MS = 10000;
 constexpr uint32_t MAX_EVENT_AGE_MS = 300000;
 constexpr char DEVICE_ID[] = "cafeteria-gate-01";
-constexpr char FIRMWARE_VERSION[] = "1.8.0";
+constexpr char FIRMWARE_VERSION[] = "1.8.1";
 WifiSetup wifiSetup;
 
 // Both supported chips can be used, including one of each in two-sensor mode.
@@ -301,7 +301,7 @@ int postJson(const String& json) {
   client.setHandshakeTimeout(5);
   HTTPClient http;
   http.setConnectTimeout(3000);
-  http.setTimeout(4000);
+  http.setTimeout(10000);
   if (!http.begin(client, SENSOR_API_URL)) return -1;
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-Device-Key", SENSOR_DEVICE_KEY);
@@ -339,6 +339,8 @@ void networkTask(void*) {
   bool haveEvent = false;
   bool haveRaw = false;
   RawBatch raw{};
+  static RawFrame uploadFrames[160];
+  uint16_t uploadCount = 0;
   bool lastSensorsReady = false;
   uint8_t uploadFailures = 0;
   SensorEvent event{};
@@ -399,16 +401,28 @@ void networkTask(void*) {
       }
     }
     if (SENSOR_COUNT == 1) {
-      if (!haveRaw) haveRaw = xQueueReceive(rawQueue, &raw, pdMS_TO_TICKS(50)) == pdTRUE;
+      if (!haveRaw) {
+        haveRaw = xQueueReceive(rawQueue, &raw, pdMS_TO_TICKS(50)) == pdTRUE;
+        uploadCount = 0;
+        if (haveRaw) {
+          for (uint8_t i = 0; i < raw.count; ++i) uploadFrames[uploadCount++] = raw.frames[i];
+          RawBatch extra{};
+          while (uploadCount + 20 <= 160 && xQueueReceive(rawQueue, &extra, 0) == pdTRUE) {
+            if (uptimeMs() - extra.uptimeMs > MAX_EVENT_AGE_MS) { droppedEvents.fetch_add(1); continue; }
+            for (uint8_t i = 0; i < extra.count; ++i) uploadFrames[uploadCount++] = extra.frames[i];
+            raw = extra;
+          }
+        }
+      }
       if (!haveRaw) continue;
       if (uptimeMs() - raw.uptimeMs > MAX_EVENT_AGE_MS) { droppedEvents.fetch_add(1); haveRaw = false; continue; }
       char id[100];
       snprintf(id, sizeof(id), "%s-%s-raw-%lu", DEVICE_ID, bootId, static_cast<unsigned long>(raw.sequence));
       String json = baseMessage("distance") + ",\"eventId\":\"" + id + "\",\"sensorId\":\"A\",\"sequence\":" + String(raw.sequence) + ",\"uptimeMs\":" + uint64String(raw.uptimeMs) + ",\"occurredAtMs\":" + uint64String(raw.occurredAtMs ? raw.occurredAtMs : epochMs() - (uptimeMs() - raw.uptimeMs)) + ",\"frames\":[";
-      json.reserve(1200);
-      for (uint8_t i = 0; i < raw.count; ++i) {
+      json.reserve(5500);
+      for (uint16_t i = 0; i < uploadCount; ++i) {
         if (i) json += ',';
-        json += "[" + uint64String(raw.frames[i].at) + "," + String(raw.frames[i].mm) + "," + String(raw.frames[i].quality) + "]";
+        json += "[" + uint64String(uploadFrames[i].at) + "," + String(uploadFrames[i].mm) + "," + String(uploadFrames[i].quality) + "]";
       }
       json += "],\"firmwareVersion\":\"" + String(FIRMWARE_VERSION) + "\"}";
       const int status = postJson(json);

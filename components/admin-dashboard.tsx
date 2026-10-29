@@ -52,6 +52,9 @@ export function AdminDashboard() {
   const [monthMenus, setMonthMenus] = useState<Record<number, string>>({});
   const [recognizingMonth, setRecognizingMonth] = useState(false);
   const [monthConfidence, setMonthConfidence] = useState<Record<number, number>>({});
+  const [distanceInput, setDistanceInput] = useState<string | null>(null);
+  const enteredDistance = distanceInput === null ? getSensorDistanceSettings(draft).detectDistanceMm / 10 : Number(distanceInput);
+  const validDistance = (distanceInput === null || distanceInput.trim() !== '') && Number.isSafeInteger(enteredDistance) && enteredDistance >= 10 && enteredDistance <= 200;
   const monthHolidays = useMemo(() => {
     const holidays: Record<number, string> = {};
     for (let day = 1; day <= daysInMonth(month); day += 1) {
@@ -104,6 +107,7 @@ export function AdminDashboard() {
   }
 
   async function saveSettings() {
+    if (!validDistance) { setMessage('감지 거리는 10~200cm 사이의 정수로 입력해 주세요.'); return; }
     if (!db) { setMessage('미리보기에서 변경되었습니다. Firebase 연결 후 모든 기기에 반영됩니다.'); return; }
     setSaving(true);
     try {
@@ -131,6 +135,7 @@ export function AdminDashboard() {
         }, { merge: true });
       });
       setSettingsDraft(null);
+      setDistanceInput(null);
       setMessage('배식 운영과 센서 집계 설정을 저장했습니다.');
     } catch { setMessage('저장하지 못했습니다. Firebase 권한을 확인해 주세요.'); }
     finally { setSaving(false); }
@@ -360,6 +365,7 @@ export function AdminDashboard() {
           {typeof state.pendingEvents === 'number' && <p className="mt-2 text-xs">전송 대기 {state.pendingEvents}건 · 보드 시작 이후 누락 {state.droppedEvents ?? 0}건</p>}
           <p className="mt-2 text-xs">서버 판단 기준 {getSensorDistanceSettings(state).detectDistanceMm / 10}cm · {state.distanceProcessingMode === 'server' ? state.sensorProcessedDistanceMm === getSensorDistanceSettings(state).detectDistanceMm ? '서버 판단 적용 중' : '새 거리 수신 대기' : '거리 전송용 펌웨어 업데이트 필요'}</p>
           {typeof state.lastRawDistanceMm === 'number' && <p className="mt-1 text-xs">최근 센서 거리: {state.lastRawDistanceMm >= 8190 ? '측정 범위 밖' : (state.lastRawDistanceMm / 10).toFixed(1) + 'cm'}</p>}
+          {state.lastRawCapturedAt && now && <p className="mt-1 text-xs text-muted-foreground">{now.getTime() - state.lastRawCapturedAt.getTime() > 15000 ? '거리 데이터 전송 지연 · ' : ''}실제 측정 {Math.max(0, Math.floor((now.getTime() - state.lastRawCapturedAt.getTime()) / 1000))}초 전</p>}
           {!sensorConnection.connected && <p className="mt-2 text-xs text-amber-800">보드 전원과 Wi-Fi를 확인해 주세요. 재연결되면 자동으로 갱신됩니다.</p>}
         </section>
         <div className="mt-5 grid gap-5 lg:grid-cols-[0.8fr_1.2fr]">
@@ -373,7 +379,7 @@ export function AdminDashboard() {
           <Card className="gap-6 p-7 shadow-sm">
             <div><h1 className="text-xl font-black tracking-tight">운영 설정</h1><p className="mt-1 text-sm text-muted-foreground">배식 운영과 센서 집계를 따로 설정하고 저장하세요.</p></div>
             <fieldset disabled={saving || loading || (isFirebaseConfigured && !connected)} className="grid gap-5 sm:grid-cols-2">
-              <label className="grid gap-2 text-sm font-bold">센서 감지 거리 (cm)<input aria-label="센서 감지 거리 (cm)" className="h-11 w-full min-w-0 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="number" min="10" max="200" step="1" value={getSensorDistanceSettings(draft).detectDistanceMm / 10} onChange={(event) => editSettings({ sensorDetectDistanceMm: Math.max(10, Math.min(200, Math.round(Number(event.target.value) || 150))) * 10 })} /><span className="text-xs font-normal leading-relaxed text-muted-foreground">10~200cm · 비워짐 기준 {getSensorDistanceSettings(draft).clearDistanceMm / 10}cm · 저장 후 다음 거리값부터 서버에서 적용 · 변경할 때는 센서 앞을 비워 주세요.</span></label>
+              <label className="grid gap-2 text-sm font-bold">센서 감지 거리 (cm)<input aria-label="센서 감지 거리 (cm)" className="h-11 w-full min-w-0 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="number" min="10" max="200" step="1" value={distanceInput ?? String(getSensorDistanceSettings(draft).detectDistanceMm / 10)} onChange={(event) => { const text = event.target.value; setDistanceInput(text); const cm = Number(text); if (text.trim() && Number.isSafeInteger(cm) && cm >= 10 && cm <= 200) editSettings({sensorDetectDistanceMm: cm * 10}); }} /><span className="text-xs font-normal leading-relaxed text-muted-foreground">{!validDistance ? '10~200cm 사이의 정수를 입력해 주세요. ' : ''}10~200cm · 비워짐 기준 {getSensorDistanceSettings(draft).clearDistanceMm / 10}cm · 저장 후 다음 거리값부터 서버에서 적용 · 변경할 때는 센서 앞을 비워 주세요.</span></label>
               <label className="grid gap-2 text-sm font-bold">분당 배식 인원<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="number" min="1" max="120" value={draft.serviceRatePerMinute} onChange={(e) => editSettings({ serviceRatePerMinute: Math.max(1, Math.min(120, Math.trunc(Number(e.target.value) || 1))) })} /></label>
               <label className="grid gap-2 text-sm font-bold">배식 운영 상태<select aria-label="배식 운영 상태" className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" value={draft.status} onChange={(e) => editSettings({ status: e.target.value as CafeteriaState['status'] })}><option value="OPEN">배식 중</option><option value="PAUSED">배식 일시 중지</option><option value="CLOSED">배식 전 / 종료</option></select></label>
               <label className="grid gap-2 text-sm font-bold">급식 시작<input className="h-11 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="time" value={draft.serviceStartsAt} onChange={(e) => editSettings({ serviceStartsAt: e.target.value })} /></label>
@@ -381,7 +387,7 @@ export function AdminDashboard() {
             </fieldset>
             <label className="flex items-center justify-between gap-4 rounded-2xl bg-sky-50 p-4"><span><span className="block text-sm font-extrabold">센서 인원 집계 반영</span><span className="mt-1 block text-xs text-muted-foreground">켜면 센서 통과 인원을 대기 인원에 더합니다. 배식 시작 전에도 사용할 수 있어요.</span></span><input aria-label="센서 인원 집계 반영" disabled={saving || loading || (isFirebaseConfigured && !connected)} className="size-5 shrink-0 accent-primary" type="checkbox" checked={getSensorCountingEnabled(draft)} onChange={(e) => editSettings({ sensorCountingEnabled: e.target.checked })} /></label>
             <label className="flex items-center justify-between gap-4 rounded-2xl bg-muted/70 p-4"><span><span className="block text-sm font-extrabold">시간에 따라 자동 감소</span><span className="mt-1 block text-xs text-muted-foreground">배식 중에만 설정한 속도로 대기 인원을 줄입니다.</span></span><input aria-label="시간에 따라 자동 감소" disabled={saving || loading || (isFirebaseConfigured && !connected)} className="size-5 shrink-0 accent-primary" type="checkbox" checked={draft.autoDecreaseEnabled} onChange={(e) => editSettings({ autoDecreaseEnabled: e.target.checked })} /></label>
-            <div className="flex flex-wrap gap-3"><button disabled={saving || loading || (isFirebaseConfigured && !connected)} onClick={saveSettings} className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-5 text-sm font-extrabold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"><Save className="size-4" /> {saving ? '저장 중…' : '설정 저장'}</button><button disabled={saving || loading || (isFirebaseConfigured && !connected)} onClick={() => { if (window.confirm('대기 인원을 0명으로 초기화할까요?')) void saveCount({ value: 0 }, '대기 인원을 초기화했습니다.'); }} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-white px-5 text-sm font-extrabold hover:bg-muted disabled:opacity-50"><RotateCcw className="size-4" /> 인원 초기화</button></div>
+            <div className="flex flex-wrap gap-3"><button onClick={saveSettings} disabled={!validDistance || saving || loading || (isFirebaseConfigured && !connected)} className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-5 text-sm font-extrabold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"><Save className="size-4" /> {saving ? '저장 중…' : '설정 저장'}</button><button disabled={saving || loading || (isFirebaseConfigured && !connected)} onClick={() => { if (window.confirm('대기 인원을 0명으로 초기화할까요?')) void saveCount({ value: 0 }, '대기 인원을 초기화했습니다.'); }} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-white px-5 text-sm font-extrabold hover:bg-muted disabled:opacity-50"><RotateCcw className="size-4" /> 인원 초기화</button></div>
             {message && <output className="block rounded-xl bg-blue-50 px-4 py-3 text-sm font-bold text-blue-800">{message}</output>}
           </Card>
         </div>

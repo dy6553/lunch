@@ -124,7 +124,7 @@ test('offline admin controls are disabled and do not schedule an adjustment', ()
 test('distance input saves the desired threshold while preserving the latest board acknowledgement and counts', async () => {
   const {h, allNodes, render} = setup();
   const input = allNodes.find(node => node.props?.['aria-label'] === '센서 감지 거리 (cm)');
-  assert.equal(input.props.value, 100);
+  assert.equal(input.props.value, '100');
   input.props.onChange({target: {value: '150'}});
   assert.equal(h.results[4].sensorDetectDistanceMm, 1500);
   h.values[4] = h.results[4];
@@ -136,6 +136,18 @@ test('distance input saves the desired threshold while preserving the latest boa
   assert.equal(h.current.waitingCount, 14);
   assert.equal(h.current.dailyVisitorCount, 10);
   assert.equal(h.current.lastHeartbeatAt, 'unchanged');
+});
+
+test('typing 150 cm keeps intermediate digits and never silently clamps the setting to 200', () => {
+  const {h, allNodes, render} = setup();
+  const input = allNodes.find(node => node.props?.['aria-label'] === '센서 감지 거리 (cm)');
+  for (const value of ['', '1', '15', '150']) input.props.onChange({target: {value}});
+  assert.equal(h.results[19], '150');
+  assert.equal(h.results[4].sensorDetectDistanceMm, 1500);
+  h.values[19] = '1';
+  const nodes = render();
+  const save = nodes.find(node => node.type === 'button' && JSON.stringify(node.props.children).includes('설정 저장'));
+  assert.equal(save.props.disabled, true);
 });
 
 test.after(() => { delete globalThis.__visitorHarness; delete globalThis.window; });

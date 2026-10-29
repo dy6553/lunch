@@ -308,11 +308,11 @@ export async function POST(request: Request) {
       throw new Error(`Could not begin transaction: ${begin.status}`);
     transaction = ((await begin.json()) as { transaction: string }).transaction;
     const eventPath = `sensorEvents/${body.eventId}`;
-    if (await readDocument(eventPath, transaction, token))
-      return Response.json({ ok: true, duplicate: true });
     const gatePath = `gateStates/${body.deviceId}`;
-    const gate = await readDocument(gatePath, transaction, token);
-    const cafeteria = await readDocument('cafeterias/main', transaction, token);
+    const [existingEvent, gate, cafeteria] = await Promise.all([
+      readDocument(eventPath, transaction, token), readDocument(gatePath, transaction, token), readDocument('cafeterias/main', transaction, token),
+    ]);
+    if (existingEvent) return Response.json({ok: true, duplicate: true});
     if (!cafeteria)
       return Response.json(
         { ok: false, error: 'cafeteria_not_configured' },
@@ -325,7 +325,7 @@ export async function POST(request: Request) {
     const lastUptime = intField(gate, 'guardUptimeMs', -1);
     if (sameBoot && body.uptimeMs !== undefined && body.uptimeMs <= lastUptime)
       return Response.json({ ok: true, duplicate: true, reason: 'stale_capture' });
-    const measurement = body.kind === 'distance' ? processDistanceFrames(body.frames,
+    const measurement = body.kind === 'distance' ? processDistanceFrames(body.frames.filter(([at]) => occurredAt - (body.uptimeMs - at) >= serverNow - MAX_EVENT_AGE_MS),
       sameBoot ? stringField(gate, 'distanceState') : '', getSensorDistanceSettings({sensorDetectDistanceMm: intField(cafeteria, 'sensorDetectDistanceMm', 1500)}).detectDistanceMm) : null;
     const pair = measurement ? {direction: measurement.passages.length ? 'PASS' : 'UNMATCHED', transitMs: null,
       pending: {sensor: '', at: 0, deviceId: body.deviceId, bootId: body.bootId ?? '', uptimeMs: 0}} : pairSensorEvent(
@@ -352,8 +352,8 @@ export async function POST(request: Request) {
       direction: { stringValue: bounce ? 'SUPPRESSED' : pair.direction },
       occurredAt: { timestampValue: new Date(occurredAt).toISOString() },
       transitMs: { integerValue: String(pair.transitMs ?? 0) },
-      confidence: { doubleValue: body.confidence ?? 1 },
-      distanceMm: { integerValue: String(body.distanceMm ?? 0) },
+      confidence: { doubleValue: body.kind === 'distance' ? 1 : body.confidence ?? 1 },
+      distanceMm: { integerValue: String(body.kind === 'distance' ? body.frames[body.frames.length - 1][1] : body.distanceMm ?? 0) },
       firmwareVersion: { stringValue: body.firmwareVersion ?? 'unknown' },
       bootId: { stringValue: body.bootId ?? '' },
       uptimeMs: { integerValue: String(body.uptimeMs ?? 0) },
@@ -457,7 +457,7 @@ export async function POST(request: Request) {
     }
     if (measurement && body.kind === 'distance') {
       const last = body.frames[body.frames.length - 1];
-      const fields = {distanceProcessingMode: {stringValue: 'server'}, sensorProcessedDistanceMm: {integerValue: String(measurement.state.threshold)}, lastRawDistanceMm: {integerValue: String(last[1])}};
+      const fields = {lastRawCapturedAt: {timestampValue: new Date(occurredAt).toISOString()}, distanceProcessingMode: {stringValue: 'server'}, sensorProcessedDistanceMm: {integerValue: String(measurement.state.threshold)}, lastRawDistanceMm: {integerValue: String(last[1])}};
       const item = writes[writes.length - 1] as {update?: {name: string; fields: Record<string, FirestoreValue>}; updateMask?: {fieldPaths: string[]}; transform?: {fieldTransforms: unknown[]}};
       if (item.update && item.updateMask) {
         Object.assign(item.update.fields, fields);

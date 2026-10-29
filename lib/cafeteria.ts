@@ -12,6 +12,7 @@ export type CafeteriaState = {
   distanceProcessingMode?: 'server' | 'device';
   sensorProcessedDistanceMm?: number;
   lastRawDistanceMm?: number;
+  lastRawCapturedAt?: Date | null;
   serviceRatePerMinute: number;
   status: CafeteriaStatus;
   sensorCountingEnabled?: boolean;

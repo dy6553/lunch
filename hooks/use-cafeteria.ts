@@ -59,6 +59,7 @@ export function useCafeteria() {
               data.visitorTrackingStartedAt instanceof Timestamp
                 ? data.visitorTrackingStartedAt.toDate()
                 : null,
+            lastRawCapturedAt: data.lastRawCapturedAt instanceof Timestamp ? data.lastRawCapturedAt.toDate() : null,
             sensorsReady: data.sensorsReady === true,
             sensorMode: data.sensorMode === 'single' ? 'single' : 'paired',
           } as CafeteriaState);
