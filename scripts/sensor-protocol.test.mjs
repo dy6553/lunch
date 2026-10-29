@@ -531,6 +531,24 @@ test('fresh real sensor traffic keeps connectivity alive when a heartbeat is del
   assert.equal(getSensorConnection({ ...state, sensorsReady: false }, now).connected, false);
 });
 
+test('distance settings are returned on authenticated checks and heartbeats, with applied distance recorded', async () => {
+  reset();
+  const check = await (await post({kind: 'check', deviceId})).json();
+  assert.equal(check.detectDistanceMm, 1500);
+  assert.equal(check.clearDistanceMm, 1650);
+  const fields = docs.get('cafeterias/main').fields;
+  fields.sensorDetectDistanceMm = {integerValue: '1200'};
+  const result = await (await post({kind: 'heartbeat', deviceId, sensorsReady: true, appliedDetectDistanceMm: 1500})).json();
+  assert.equal(result.detectDistanceMm, 1200);
+  assert.equal(result.clearDistanceMm, 1350);
+  assert.equal(fields.sensorAppliedDistanceMm.integerValue, '1500');
+  assert.equal(fields.sensorDetectDistanceMm.integerValue, '1200');
+  assert.equal(fields.waitingCount.integerValue, '8');
+  assert.equal(validSensorMessage({kind: 'heartbeat', deviceId, sensorsReady: true, appliedDetectDistanceMm: 5000}), false);
+  fields.sensorDetectDistanceMm = {integerValue: '-1'};
+  assert.equal((await (await post({kind: 'check', deviceId})).json()).detectDistanceMm, 1500);
+});
+
 test('explicit sensor counting is independent of serving status in single and paired modes', async () => {
   for (const mode of ['single', 'paired']) {
     for (const status of ['OPEN', 'CLOSED', 'PAUSED']) {

@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <HTTPClient.h>
+#include <Preferences.h>
 #include <VL53L1X.h>
 #include <VL53L0X.h>
 #include "config.h"
@@ -18,15 +19,14 @@ constexpr uint8_t SDA_PIN = 21;
 constexpr uint8_t SCL_PIN = 22;
 constexpr uint8_t XSHUT_A_PIN = 18;
 constexpr uint8_t XSHUT_B_PIN = 19;
-constexpr uint16_t DETECT_DISTANCE_MM = 900;
-constexpr uint16_t CLEAR_DISTANCE_MM = 1050;
+std::atomic<uint32_t> detectDistanceMm{1500};
 constexpr uint8_t STABLE_SAMPLES = 3;
 // A brief gap between an arm and torso must not re-arm the counter.
 constexpr uint32_t CLEAR_HOLD_MS = 500;
 constexpr uint32_t HEARTBEAT_MS = 10000;
 constexpr uint32_t MAX_EVENT_AGE_MS = 300000;
 constexpr char DEVICE_ID[] = "cafeteria-gate-01";
-constexpr char FIRMWARE_VERSION[] = "1.6.1";
+constexpr char FIRMWARE_VERSION[] = "1.7.0";
 WifiSetup wifiSetup;
 
 // Both supported chips can be used, including one of each in two-sensor mode.
@@ -95,6 +95,7 @@ struct BeamState {
   uint32_t lastFrameMs = 0;
   uint32_t lastUsableFrameMs = 0;
   uint32_t clearSinceMs = 0;
+  uint16_t configuredDistanceMm = 0;
 };
 struct SensorEvent {
   uint64_t uptimeMs;
@@ -180,6 +181,13 @@ bool startSensors() {
 }
 
 void sampleBeam(DistanceSensor& sensor, BeamState& beam, char id) {
+  const uint16_t detect = detectDistanceMm.load();
+  const uint16_t clear = detect + 150;
+  if (beam.configuredDistanceMm != detect) {
+    beam = BeamState{};
+    beam.configuredDistanceMm = detect;
+    beam.lastFrameMs = beam.lastUsableFrameMs = millis();
+  }
   uint16_t distance = 0;
   bool valid = false;
   bool noTarget = false;
@@ -199,13 +207,13 @@ void sampleBeam(DistanceSensor& sensor, BeamState& beam, char id) {
     else Serial.printf("DISTANCE %c: %s\n", id, noTarget ? "OUT OF RANGE" : "INVALID");
   }
   if (valid || noTarget) beam.lastUsableFrameMs = millis();
-  if (noTarget) distance = CLEAR_DISTANCE_MM;
+  if (noTarget) distance = clear;
   else if (!valid) {
     beam.blockedSamples = beam.clearSamples = 0;
     beam.clearSinceMs = 0;
     return;
   }
-  if (distance > 0 && distance < DETECT_DISTANCE_MM) {
+  if (distance > 0 && distance < detect) {
     beam.clearSamples = 0;
     beam.clearSinceMs = 0;
     if (beam.blockedSamples < STABLE_SAMPLES) ++beam.blockedSamples;
@@ -223,7 +231,7 @@ void sampleBeam(DistanceSensor& sensor, BeamState& beam, char id) {
         Serial.println("QUEUE FULL: event lost. Check the network before counting.");
       }
     }
-  } else if (distance >= CLEAR_DISTANCE_MM) {
+  } else if (distance >= clear) {
     beam.blockedSamples = 0;
     if (beam.clearSamples == 0) beam.clearSinceMs = millis();
     if (beam.clearSamples < STABLE_SAMPLES) ++beam.clearSamples;
@@ -244,6 +252,32 @@ void sampleBeam(DistanceSensor& sensor, BeamState& beam, char id) {
     beam.blockedSamples = beam.clearSamples = 0;
     beam.clearSinceMs = 0;
   }
+}
+
+void applyRemoteDistance(const String& response) {
+  const String field = "\"detectDistanceMm\":";
+  int position = response.indexOf(field);
+  if (position < 0) return;
+  position += field.length();
+  while (position < response.length() && response[position] == ' ') ++position;
+  uint32_t value = 0;
+  uint8_t digits = 0;
+  while (position < response.length() && response[position] >= '0' && response[position] <= '9') {
+    value = value * 10 + response[position++] - '0';
+    if (++digits > 4) return;
+  }
+  if (!digits || value < 100 || value > 2000) return;
+  while (position < response.length() && response[position] == ' ') ++position;
+  if (position >= response.length() || (response[position] != ',' && response[position] != '}')) return;
+  const uint16_t before = detectDistanceMm.exchange(static_cast<uint16_t>(value));
+  if (before != value) {
+    Preferences settings;
+    if (settings.begin("lunch-sensor", false)) {
+      if (settings.putUShort("detect-mm", static_cast<uint16_t>(value)) != sizeof(uint16_t)) Serial.println("DISTANCE SETTING SAVE FAILED");
+      settings.end();
+    } else Serial.println("DISTANCE SETTING SAVE FAILED");
+  }
+  if (before != value) Serial.printf("DISTANCE SETTING APPLIED: detect %lu mm, clear %lu mm\n", static_cast<unsigned long>(value), static_cast<unsigned long>(value + 150));
 }
 
 int postJson(const String& json) {
@@ -336,7 +370,7 @@ void networkTask(void*) {
     const bool readyNow = sensorsReady.load();
     if (millis() - lastHeartbeat >= HEARTBEAT_MS || readyNow != lastSensorsReady) {
       const String json = baseMessage("heartbeat") + ",\"sensorsReady\":" +
-        (readyNow ? "true" : "false") + ",\"firmwareVersion\":\"" + FIRMWARE_VERSION + "\",\"pendingEvents\":" + String(uxQueueMessagesWaiting(eventQueue) + (haveEvent ? 1 : 0)) + ",\"droppedEvents\":" + String(droppedEvents.load()) + ",\"wifiRssi\":" + String(WiFi.RSSI()) + "}";
+        (readyNow ? "true" : "false") + ",\"firmwareVersion\":\"" + FIRMWARE_VERSION + "\",\"pendingEvents\":" + String(uxQueueMessagesWaiting(eventQueue) + (haveEvent ? 1 : 0)) + ",\"droppedEvents\":" + String(droppedEvents.load()) + ",\"wifiRssi\":" + String(WiFi.RSSI()) + ",\"appliedDetectDistanceMm\":" + String(detectDistanceMm.load()) + "}";
       const int status = postJson(json);
       lastHeartbeat = millis();
       lastSensorsReady = readyNow;
@@ -380,6 +414,13 @@ void networkTask(void*) {
 
 void setup() {
   Serial.begin(115200);
+  Preferences settings;
+  if (settings.begin("lunch-sensor", true)) {
+    const uint16_t stored = settings.getUShort("detect-mm", 1500);
+    if (stored >= 100 && stored <= 2000) detectDistanceMm.store(stored);
+    settings.end();
+  }
+  Serial.printf("DISTANCE SETTING: detect %lu mm, clear %lu mm\n", static_cast<unsigned long>(detectDistanceMm.load()), static_cast<unsigned long>(detectDistanceMm.load() + 150));
   delay(300);
   Serial.printf("Cafeteria gate %s: %u sensor(s), automatic L0X/L1X detection\n", FIRMWARE_VERSION, SENSOR_COUNT);
   snprintf(bootId, sizeof(bootId), "%08lx%08lx", static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()));

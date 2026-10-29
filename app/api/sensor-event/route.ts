@@ -6,7 +6,7 @@ import {
   pairSensorEvent,
   validSensorMessage,
 } from '@/lib/sensor-protocol';
-import { getSensorCountingEnabled, type CafeteriaStatus } from '@/lib/cafeteria';
+import { getSensorCountingEnabled, getSensorDistanceSettings, type CafeteriaStatus } from '@/lib/cafeteria';
 import { getNextDailyVisitors } from '@/lib/visitors';
 
 type FirestoreValue = {
@@ -147,7 +147,7 @@ export async function GET() {
   return Response.json({
     ok: true,
     service: 'cafeteria-sensor-ingest',
-    version: 4,
+    version: 5,
     sensors: ['A', 'B'],
     sensorModes: ['single', 'paired'],
     configured: Boolean(
@@ -219,9 +219,12 @@ export async function POST(request: Request) {
         deviceId: body.deviceId,
         servingStatus: stringField(cafeteria, 'status'),
         datastoreReadable: true,
+        ...getSensorDistanceSettings({ sensorDetectDistanceMm: intField(cafeteria, 'sensorDetectDistanceMm', 1500) }),
       });
     }
     if (body.kind === 'heartbeat') {
+      const cafeteria = await readDocument('cafeterias/main', null, token);
+      if (!cafeteria) return Response.json({ ok: false, error: 'cafeteria_not_configured' }, { status: 503 });
       const response = await fetch(`${API_ROOT}/documents:commit`, {
         method: 'POST',
         headers: {
@@ -235,6 +238,7 @@ export async function POST(request: Request) {
                 name: documentName('cafeterias/main'),
                 fields: {
                   sensorsReady: { booleanValue: body.sensorsReady! },
+                  ...(body.appliedDetectDistanceMm !== undefined ? { sensorAppliedDistanceMm: { integerValue: String(body.appliedDetectDistanceMm) } } : {}),
                   ...(body.pendingEvents !== undefined ? { pendingEvents: { integerValue: String(body.pendingEvents) } } : {}),
                   ...(body.droppedEvents !== undefined ? { droppedEvents: { integerValue: String(body.droppedEvents) } } : {}),
                   ...(body.wifiRssi !== undefined ? { wifiRssi: { integerValue: String(body.wifiRssi) } } : {}),
@@ -251,6 +255,7 @@ export async function POST(request: Request) {
                   ...(body.pendingEvents !== undefined ? ['pendingEvents'] : []),
                   ...(body.droppedEvents !== undefined ? ['droppedEvents'] : []),
                   ...(body.wifiRssi !== undefined ? ['wifiRssi'] : []),
+                  ...(body.appliedDetectDistanceMm !== undefined ? ['sensorAppliedDistanceMm'] : []),
                   'sensorsReady',
                   'sensorDeviceId',
                   'sensorMode',
@@ -273,6 +278,7 @@ export async function POST(request: Request) {
         ok: true,
         heartbeat: true,
         sensorsReady: body.sensorsReady,
+        ...getSensorDistanceSettings({ sensorDetectDistanceMm: intField(cafeteria, 'sensorDetectDistanceMm', 1500) }),
       });
     }
 

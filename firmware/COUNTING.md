@@ -1,4 +1,4 @@
-# Counting stability (firmware 1.6.1)
+# Counting stability (firmware 1.7.0)
 
 Single-sensor counting requires an initially clear beam, three stable blocked
 readings, then at least 500 ms of continuous clear readings. Short body gaps,
@@ -45,3 +45,10 @@ address before initialization when no device answers at 0x29. An ESP32 reset
 does not power-cycle the sensor if XSHUT is unconnected; without address
 recovery a previously working four-wire sensor can fail to initialize after
 an upload, reboot, or I2C retry. Model IDs are checked before restoring 0x29.
+
+
+Firmware 1.7.0 accepts authenticated distance settings in check/heartbeat responses.
+The default detection threshold is 1500 mm and clear threshold is detection +
+150 mm. Admins can select 10-200 cm. The board acknowledges the applied distance
+in the next heartbeat and keeps it in NVS for offline restarts. A distance change
+resets beam state and requires a fresh clear interval, avoiding a phantom passage.

@@ -21,7 +21,7 @@ type ControlBase = {
 export type SensorMessage =
   | SensorEvent
   | (ControlBase & { kind: 'check' })
-  | (ControlBase & { kind: 'heartbeat'; sensorsReady: boolean; pendingEvents?: number; droppedEvents?: number; wifiRssi?: number });
+  | (ControlBase & { kind: 'heartbeat'; sensorsReady: boolean; pendingEvents?: number; droppedEvents?: number; wifiRssi?: number; appliedDetectDistanceMm?: number });
 export const MIN_TRANSIT_MS = 100;
 export const MAX_TRANSIT_MS = 8000;
 export const MAX_EVENT_AGE_MS = 300000;
@@ -64,6 +64,7 @@ export function validSensorMessage(value: unknown): value is SensorMessage {
     return false;
   if (b.kind === 'check') return true;
   if (b.kind === 'heartbeat') return typeof b.sensorsReady === 'boolean' &&
+    (b.appliedDetectDistanceMm === undefined || safeInteger(b.appliedDetectDistanceMm, 100, 2000)) &&
     (b.pendingEvents === undefined || safeInteger(b.pendingEvents, 0, 129)) &&
     (b.droppedEvents === undefined || safeInteger(b.droppedEvents, 0)) &&
     (b.wifiRssi === undefined || safeInteger(b.wifiRssi, -127, 0));
