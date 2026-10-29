@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/card';
 import { auth, db, isFirebaseConfigured } from '@/lib/firebase';
 import { getCafeteriaSettings, getSensorCountingEnabled, type CafeteriaState } from '@/lib/cafeteria';
 import { getQueueEstimate, getSensorConnection } from '@/lib/dashboard';
+import { adjustDailyVisitors, getTodayVisitors } from '@/lib/visitors';
 import { useCafeteria } from '@/hooks/use-cafeteria';
 import { getKoreanDateKey, useDailyMenu } from '@/hooks/use-daily-menu';
 import { calendarWeekCount, cleanMenuCell, cleanOcrText, daysInMonth, ocrResultScore, weekdayCellForDay } from '@/lib/monthly-menu';
@@ -26,6 +27,8 @@ export function AdminDashboard() {
     ...(countDraft === null ? {} : { waitingCount: countDraft }),
   };
   const [saving, setSaving] = useState(false);
+  const [visitorReduction, setVisitorReduction] = useState('1');
+  const [visitorMessage, setVisitorMessage] = useState('');
   const [now, setNow] = useState<Date | null>(null);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -33,6 +36,10 @@ export function AdminDashboard() {
   }, []);
   const sensorConnection = getSensorConnection(state, now);
   const displayedCount = countDraft ?? getQueueEstimate(state, now).count;
+  const todayVisitors = getTodayVisitors(state, now);
+  const reductionAmount = Number(visitorReduction);
+  const validReduction = Number.isSafeInteger(reductionAmount) && reductionAmount > 0;
+  const visitorControlsDisabled = saving || loading || !now || (isFirebaseConfigured && !connected);
   const [menuDate, setMenuDate] = useState(getKoreanDateKey());
   const { menu } = useDailyMenu(menuDate);
   const [menuDraft, setMenuDraft] = useState<{ date: string; text: string } | null>(null);
@@ -149,6 +156,28 @@ export function AdminDashboard() {
       setMessage(successMessage);
     } catch { setMessage('저장하지 못했습니다. Firebase 권한을 확인해 주세요.'); }
     finally { setSaving(false); }
+  }
+
+  async function saveVisitors(change: { subtract: number } | { reset: true }) {
+    if (!db || visitorControlsDisabled) return;
+    setVisitorMessage('');
+    setSaving(true);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const reference = doc(db!, 'cafeterias', 'main');
+        const snapshot = await transaction.get(reference);
+        if (!snapshot.exists()) throw new Error('급식실 정보를 불러온 뒤 다시 시도해 주세요.');
+        const data = snapshot.data();
+        const adjusted = adjustDailyVisitors(data as CafeteriaState, change, new Date());
+        transaction.set(reference, {
+          ...adjusted,
+          ...(!data.visitorTrackingStartedAt ? { visitorTrackingStartedAt: serverTimestamp() } : {}),
+        }, { merge: true });
+      });
+      setVisitorMessage('reset' in change ? '오늘 누적 방문을 0명으로 초기화했습니다.' : '오늘 누적 방문에서 ' + change.subtract + '명을 줄였습니다.');
+    } catch (error) {
+      setVisitorMessage(error instanceof Error ? '저장하지 못했습니다. ' + error.message : '누적 방문을 저장하지 못했습니다. 다시 시도해 주세요.');
+    } finally { setSaving(false); }
   }
 
   async function recognizeMenu() {
@@ -353,6 +382,20 @@ export function AdminDashboard() {
             {message && <output className="block rounded-xl bg-blue-50 px-4 py-3 text-sm font-bold text-blue-800">{message}</output>}
           </Card>
         </div>
+
+        <Card aria-labelledby="admin-visitors-title" className="mt-5 gap-5 p-5 shadow-sm sm:p-7">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div><h2 id="admin-visitors-title" className="text-xl font-black tracking-tight">오늘 누적 방문</h2><p className="mt-1 text-sm text-muted-foreground">잘못 집계된 인원을 줄이거나 오늘 기록을 초기화할 수 있어요.</p></div>
+            <output aria-label="관리자 오늘 누적 방문" className="text-3xl font-black tabular-nums">{todayVisitors === null ? '확인 중' : todayVisitors.toLocaleString('ko-KR') + '명'}</output>
+          </div>
+          <form className="flex flex-wrap items-end gap-3" onSubmit={(event) => { event.preventDefault(); if (validReduction) void saveVisitors({ subtract: reductionAmount }); }}>
+            <label className="grid min-w-0 flex-1 gap-2 text-sm font-bold">줄일 인원<input aria-label="줄일 누적 방문 인원" type="number" min="1" step="1" max={Number.MAX_SAFE_INTEGER} required disabled={visitorControlsDisabled} value={visitorReduction} onChange={(event) => setVisitorReduction(event.target.value)} className="h-11 w-full min-w-0 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" /></label>
+            <button type="submit" disabled={visitorControlsDisabled || !validReduction} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-primary px-5 text-sm font-extrabold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"><Minus className="size-4" /> 인원 줄이기</button>
+            <button type="button" disabled={visitorControlsDisabled} onClick={() => { if (window.confirm('오늘 누적 방문을 0명으로 초기화할까요?')) void saveVisitors({ reset: true }); }} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-5 text-sm font-extrabold text-rose-700 hover:bg-rose-100 disabled:opacity-50"><RotateCcw className="size-4" /> 0명으로 초기화</button>
+          </form>
+          {visitorMessage && <output aria-live="polite" className="block rounded-xl bg-blue-50 px-4 py-3 text-sm font-bold text-blue-800">{visitorMessage}</output>}
+          <p className="text-xs leading-relaxed text-muted-foreground">현재 대기 인원은 유지됩니다. 초기화 후 센서가 새로 감지하면 누적 방문이 다시 늘어납니다.</p>
+        </Card>
 
         <Card className="mt-5 gap-6 p-7 shadow-sm">
           <div><h2 className="text-xl font-black tracking-tight">날짜별 급식 메뉴</h2><p className="mt-1 text-sm text-muted-foreground">메뉴판 사진을 올리면 음식 이름을 읽어옵니다. 인식 결과를 확인·수정한 뒤 저장해 주세요.</p></div>
