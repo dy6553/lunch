@@ -3,7 +3,7 @@
 ## 사용할 프로그램
 
 - 센서 1개 거리 측정 확인: [sensor_check](sensor_check/README.md)
-- 센서 1개 또는 2개와 웹사이트 연동: `cafeteria_gate/cafeteria_gate.ino` (버전 1.6.0)
+- 센서 1개 또는 2개와 웹사이트 연동: `cafeteria_gate/cafeteria_gate.ino` (버전 1.6.1)
 
 개인용 다운로드에는 전송 주소와 이 보드의 장치키가 설정되어 있습니다.
 Wi-Fi는 휴대폰 설정 화면에서 입력하므로 `secrets.h`의 아래 두 줄은 비워 두어도 됩니다.
