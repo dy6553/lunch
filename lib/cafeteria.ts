@@ -7,6 +7,11 @@ export type CafeteriaState = {
   droppedEvents?: number;
   wifiRssi?: number;
   sensorFirmwareVersion?: string;
+  sensorDetectDistanceMm?: number;
+  sensorAppliedDistanceMm?: number;
+  distanceProcessingMode?: 'server' | 'device';
+  sensorProcessedDistanceMm?: number;
+  lastRawDistanceMm?: number;
   serviceRatePerMinute: number;
   status: CafeteriaStatus;
   sensorCountingEnabled?: boolean;
@@ -53,11 +58,18 @@ export function getCafeteriaSettings(state: CafeteriaState) {
   return {
     status: state.status,
     sensorCountingEnabled: getSensorCountingEnabled(state),
+    sensorDetectDistanceMm: getSensorDistanceSettings(state).detectDistanceMm,
     serviceRatePerMinute: state.serviceRatePerMinute,
     autoDecreaseEnabled: state.autoDecreaseEnabled,
     serviceStartsAt: state.serviceStartsAt,
     serviceEndsAt: state.serviceEndsAt,
   };
+}
+
+export function getSensorDistanceSettings(state: Pick<CafeteriaState, 'sensorDetectDistanceMm'>) {
+  const distance = state.sensorDetectDistanceMm;
+  const detectDistanceMm = typeof distance === 'number' && Number.isSafeInteger(distance) && distance >= 100 && distance <= 2000 ? distance : 1500;
+  return { detectDistanceMm, clearDistanceMm: detectDistanceMm + 150 };
 }
 
 export function getCongestion(count: number) {

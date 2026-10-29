@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <HTTPClient.h>
+#include <Preferences.h>
 #include <VL53L1X.h>
 #include <VL53L0X.h>
 #include "config.h"
@@ -18,15 +19,14 @@ constexpr uint8_t SDA_PIN = 21;
 constexpr uint8_t SCL_PIN = 22;
 constexpr uint8_t XSHUT_A_PIN = 18;
 constexpr uint8_t XSHUT_B_PIN = 19;
-constexpr uint16_t DETECT_DISTANCE_MM = 900;
-constexpr uint16_t CLEAR_DISTANCE_MM = 1050;
+std::atomic<uint32_t> detectDistanceMm{1500};
 constexpr uint8_t STABLE_SAMPLES = 3;
 // A brief gap between an arm and torso must not re-arm the counter.
 constexpr uint32_t CLEAR_HOLD_MS = 500;
 constexpr uint32_t HEARTBEAT_MS = 10000;
 constexpr uint32_t MAX_EVENT_AGE_MS = 300000;
 constexpr char DEVICE_ID[] = "cafeteria-gate-01";
-constexpr char FIRMWARE_VERSION[] = "1.6.1";
+constexpr char FIRMWARE_VERSION[] = "1.8.0";
 WifiSetup wifiSetup;
 
 // Both supported chips can be used, including one of each in two-sensor mode.
@@ -84,6 +84,9 @@ std::atomic<uint32_t> droppedEvents{0};
 char bootId[17];
 uint32_t sequenceNumber = 0;
 QueueHandle_t eventQueue = nullptr;
+QueueHandle_t rawQueue = nullptr;
+struct RawFrame { uint64_t at; uint16_t mm; uint8_t quality; };
+struct RawBatch { uint64_t uptimeMs; uint64_t occurredAtMs; uint32_t sequence; uint8_t count; RawFrame frames[20]; };
 
 struct BeamState {
   bool blocked = false;
@@ -95,6 +98,7 @@ struct BeamState {
   uint32_t lastFrameMs = 0;
   uint32_t lastUsableFrameMs = 0;
   uint32_t clearSinceMs = 0;
+  uint16_t configuredDistanceMm = 0;
 };
 struct SensorEvent {
   uint64_t uptimeMs;
@@ -106,6 +110,7 @@ struct SensorEvent {
 BeamState beamA;
 BeamState beamB;
 
+String uint64String(uint64_t value) { char text[24]; snprintf(text, sizeof(text), "%llu", static_cast<unsigned long long>(value)); return String(text); }
 uint64_t uptimeMs() { return static_cast<uint64_t>(esp_timer_get_time()) / 1000; }
 uint64_t epochMs() {
   timeval now;
@@ -179,7 +184,42 @@ bool startSensors() {
   return true;
 }
 
+// Forward measurements only: all presence/pass counting runs on the server.
+void sampleRaw(DistanceSensor& sensor, BeamState& health) {
+  static RawBatch batch{};
+  static uint64_t sentAt = 0;
+  static uint16_t sentMm = 0;
+  static uint8_t sentQuality = 255;
+  uint16_t mm = 0; bool valid = false, noTarget = false;
+  if (!sensor.read(mm, valid, noTarget)) return;
+  health.lastFrameMs = millis();
+  if (valid || noTarget) health.lastUsableFrameMs = millis();
+  const uint8_t quality = noTarget ? 2 : valid ? 1 : 0;
+  const uint64_t captured = uptimeMs();
+  batch.frames[batch.count++] = RawFrame{captured, mm, quality};
+  batch.uptimeMs = captured;
+  batch.occurredAtMs = clockReady() ? epochMs() : 0;
+  if (batch.count < 20 && batch.uptimeMs - batch.frames[0].at < 1000) return;
+  bool unchanged = sentQuality == quality && abs(int(sentMm) - int(mm)) <= 20;
+  for (uint8_t i = 0; i < batch.count; ++i)
+    if (batch.frames[i].quality != quality || abs(int(batch.frames[i].mm) - int(mm)) > 20) unchanged = false;
+  // Generic telemetry compression; it never classifies people or passages.
+  if (!unchanged || batch.uptimeMs - sentAt >= 10000) {
+    batch.sequence = ++sequenceNumber;
+    if (xQueueSend(rawQueue, &batch, 0) != pdTRUE) droppedEvents.fetch_add(1);
+    else { sentAt = batch.uptimeMs; sentMm = mm; sentQuality = quality; }
+  }
+  batch = RawBatch{};
+}
+
 void sampleBeam(DistanceSensor& sensor, BeamState& beam, char id) {
+  const uint16_t detect = detectDistanceMm.load();
+  const uint16_t clear = detect + 150;
+  if (beam.configuredDistanceMm != detect) {
+    beam = BeamState{};
+    beam.configuredDistanceMm = detect;
+    beam.lastFrameMs = beam.lastUsableFrameMs = millis();
+  }
   uint16_t distance = 0;
   bool valid = false;
   bool noTarget = false;
@@ -199,13 +239,13 @@ void sampleBeam(DistanceSensor& sensor, BeamState& beam, char id) {
     else Serial.printf("DISTANCE %c: %s\n", id, noTarget ? "OUT OF RANGE" : "INVALID");
   }
   if (valid || noTarget) beam.lastUsableFrameMs = millis();
-  if (noTarget) distance = CLEAR_DISTANCE_MM;
+  if (noTarget) distance = clear;
   else if (!valid) {
     beam.blockedSamples = beam.clearSamples = 0;
     beam.clearSinceMs = 0;
     return;
   }
-  if (distance > 0 && distance < DETECT_DISTANCE_MM) {
+  if (distance > 0 && distance < detect) {
     beam.clearSamples = 0;
     beam.clearSinceMs = 0;
     if (beam.blockedSamples < STABLE_SAMPLES) ++beam.blockedSamples;
@@ -223,7 +263,7 @@ void sampleBeam(DistanceSensor& sensor, BeamState& beam, char id) {
         Serial.println("QUEUE FULL: event lost. Check the network before counting.");
       }
     }
-  } else if (distance >= CLEAR_DISTANCE_MM) {
+  } else if (distance >= clear) {
     beam.blockedSamples = 0;
     if (beam.clearSamples == 0) beam.clearSinceMs = millis();
     if (beam.clearSamples < STABLE_SAMPLES) ++beam.clearSamples;
@@ -288,6 +328,8 @@ void networkTask(void*) {
   bool timeRequested = false;
   bool verified = false;
   bool haveEvent = false;
+  bool haveRaw = false;
+  RawBatch raw{};
   bool lastSensorsReady = false;
   uint8_t uploadFailures = 0;
   SensorEvent event{};
@@ -336,7 +378,7 @@ void networkTask(void*) {
     const bool readyNow = sensorsReady.load();
     if (millis() - lastHeartbeat >= HEARTBEAT_MS || readyNow != lastSensorsReady) {
       const String json = baseMessage("heartbeat") + ",\"sensorsReady\":" +
-        (readyNow ? "true" : "false") + ",\"firmwareVersion\":\"" + FIRMWARE_VERSION + "\",\"pendingEvents\":" + String(uxQueueMessagesWaiting(eventQueue) + (haveEvent ? 1 : 0)) + ",\"droppedEvents\":" + String(droppedEvents.load()) + ",\"wifiRssi\":" + String(WiFi.RSSI()) + "}";
+        (readyNow ? "true" : "false") + ",\"firmwareVersion\":\"" + FIRMWARE_VERSION + "\",\"pendingEvents\":" + String(SENSOR_COUNT == 1 ? uxQueueMessagesWaiting(rawQueue) + (haveRaw ? 1 : 0) : uxQueueMessagesWaiting(eventQueue) + (haveEvent ? 1 : 0)) + ",\"droppedEvents\":" + String(droppedEvents.load()) + ",\"wifiRssi\":" + String(WiFi.RSSI()) + "}";
       const int status = postJson(json);
       lastHeartbeat = millis();
       lastSensorsReady = readyNow;
@@ -346,6 +388,26 @@ void networkTask(void*) {
         networkReady.store(false);
         continue;
       }
+    }
+    if (SENSOR_COUNT == 1) {
+      if (!haveRaw) haveRaw = xQueueReceive(rawQueue, &raw, pdMS_TO_TICKS(50)) == pdTRUE;
+      if (!haveRaw) continue;
+      if (uptimeMs() - raw.uptimeMs > MAX_EVENT_AGE_MS) { droppedEvents.fetch_add(1); haveRaw = false; continue; }
+      char id[100];
+      snprintf(id, sizeof(id), "%s-%s-raw-%lu", DEVICE_ID, bootId, static_cast<unsigned long>(raw.sequence));
+      String json = baseMessage("distance") + ",\"eventId\":\"" + id + "\",\"sensorId\":\"A\",\"sequence\":" + String(raw.sequence) + ",\"uptimeMs\":" + uint64String(raw.uptimeMs) + ",\"occurredAtMs\":" + uint64String(raw.occurredAtMs ? raw.occurredAtMs : epochMs() - (uptimeMs() - raw.uptimeMs)) + ",\"frames\":[";
+      for (uint8_t i = 0; i < raw.count; ++i) {
+        if (i) json += ',';
+        json += "[" + uint64String(raw.frames[i].at) + "," + String(raw.frames[i].mm) + "," + String(raw.frames[i].quality) + "]";
+      }
+      json += "],\"firmwareVersion\":\"" + String(FIRMWARE_VERSION) + "\"}";
+      const int status = postJson(json);
+      Serial.printf("RAW DISTANCE UPLOAD #%lu HTTP %d\n", static_cast<unsigned long>(raw.sequence), status);
+      if (success(status) || (status >= 400 && status < 500 && status != 401 && status != 403 && status != 408 && status != 429)) {
+        if (!success(status)) droppedEvents.fetch_add(1);
+        haveRaw = false;
+      } else { if (status == 401 || status == 403) verified = false; vTaskDelay(pdMS_TO_TICKS(1000)); }
+      continue;
     }
     if (!haveEvent) haveEvent = xQueueReceive(eventQueue, &event, pdMS_TO_TICKS(50)) == pdTRUE;
     if (!haveEvent) continue;
@@ -386,7 +448,8 @@ void setup() {
   Wire.begin(SDA_PIN, SCL_PIN, 100000);
   Wire.setTimeOut(25);
   eventQueue = xQueueCreate(128, sizeof(SensorEvent));
-  if (!eventQueue ||
+  rawQueue = xQueueCreate(64, sizeof(RawBatch));
+  if (!eventQueue || !rawQueue ||
       xTaskCreate(wifiSetupTask, "wifi-setup", 8192, nullptr, 1, nullptr) != pdPASS ||
       xTaskCreate(networkTask, "sensor-network", 12288, nullptr, 1, nullptr) != pdPASS) {
     Serial.println("START FAILED: not enough memory. Press EN to retry.");
@@ -406,7 +469,8 @@ void loop() {
     delay(5);
     return;
   }
-  sampleBeam(sensorA, beamA, 'A');
+  if (SENSOR_COUNT == 1) sampleRaw(sensorA, beamA);
+  else sampleBeam(sensorA, beamA, 'A');
   if (SENSOR_COUNT == 2) sampleBeam(sensorB, beamB, 'B');
   if (millis() - beamA.lastFrameMs > 5000 || millis() - beamA.lastUsableFrameMs > 10000 ||
       (SENSOR_COUNT == 2 && (millis() - beamB.lastFrameMs > 5000 || millis() - beamB.lastUsableFrameMs > 10000))) {

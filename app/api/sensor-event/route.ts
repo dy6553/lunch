@@ -1,3 +1,5 @@
+import { processDistanceFrames } from '@/lib/distance-counter';
+import type { SensorEvent } from '@/lib/sensor-protocol';
 import {
   authorizeSensor,
   MAX_EVENT_AGE_MS,
@@ -6,7 +8,7 @@ import {
   pairSensorEvent,
   validSensorMessage,
 } from '@/lib/sensor-protocol';
-import { getSensorCountingEnabled, type CafeteriaStatus } from '@/lib/cafeteria';
+import { getSensorCountingEnabled, getSensorDistanceSettings, type CafeteriaStatus } from '@/lib/cafeteria';
 import { getNextDailyVisitors } from '@/lib/visitors';
 
 type FirestoreValue = {
@@ -147,7 +149,7 @@ export async function GET() {
   return Response.json({
     ok: true,
     service: 'cafeteria-sensor-ingest',
-    version: 4,
+    version: 6,
     sensors: ['A', 'B'],
     sensorModes: ['single', 'paired'],
     configured: Boolean(
@@ -219,9 +221,12 @@ export async function POST(request: Request) {
         deviceId: body.deviceId,
         servingStatus: stringField(cafeteria, 'status'),
         datastoreReadable: true,
+        ...getSensorDistanceSettings({ sensorDetectDistanceMm: intField(cafeteria, 'sensorDetectDistanceMm', 1500) }),
       });
     }
     if (body.kind === 'heartbeat') {
+      const cafeteria = await readDocument('cafeterias/main', null, token);
+      if (!cafeteria) return Response.json({ ok: false, error: 'cafeteria_not_configured' }, { status: 503 });
       const response = await fetch(`${API_ROOT}/documents:commit`, {
         method: 'POST',
         headers: {
@@ -235,6 +240,7 @@ export async function POST(request: Request) {
                 name: documentName('cafeterias/main'),
                 fields: {
                   sensorsReady: { booleanValue: body.sensorsReady! },
+                  ...(body.appliedDetectDistanceMm !== undefined ? { sensorAppliedDistanceMm: { integerValue: String(body.appliedDetectDistanceMm) } } : {}),
                   ...(body.pendingEvents !== undefined ? { pendingEvents: { integerValue: String(body.pendingEvents) } } : {}),
                   ...(body.droppedEvents !== undefined ? { droppedEvents: { integerValue: String(body.droppedEvents) } } : {}),
                   ...(body.wifiRssi !== undefined ? { wifiRssi: { integerValue: String(body.wifiRssi) } } : {}),
@@ -251,6 +257,7 @@ export async function POST(request: Request) {
                   ...(body.pendingEvents !== undefined ? ['pendingEvents'] : []),
                   ...(body.droppedEvents !== undefined ? ['droppedEvents'] : []),
                   ...(body.wifiRssi !== undefined ? ['wifiRssi'] : []),
+                  ...(body.appliedDetectDistanceMm !== undefined ? ['sensorAppliedDistanceMm'] : []),
                   'sensorsReady',
                   'sensorDeviceId',
                   'sensorMode',
@@ -273,6 +280,7 @@ export async function POST(request: Request) {
         ok: true,
         heartbeat: true,
         sensorsReady: body.sensorsReady,
+        ...getSensorDistanceSettings({ sensorDetectDistanceMm: intField(cafeteria, 'sensorDetectDistanceMm', 1500) }),
       });
     }
 
@@ -317,8 +325,11 @@ export async function POST(request: Request) {
     const lastUptime = intField(gate, 'guardUptimeMs', -1);
     if (sameBoot && body.uptimeMs !== undefined && body.uptimeMs <= lastUptime)
       return Response.json({ ok: true, duplicate: true, reason: 'stale_capture' });
-    const pair = pairSensorEvent(
-      body,
+    const measurement = body.kind === 'distance' ? processDistanceFrames(body.frames,
+      sameBoot ? stringField(gate, 'distanceState') : '', getSensorDistanceSettings({sensorDetectDistanceMm: intField(cafeteria, 'sensorDetectDistanceMm', 1500)}).detectDistanceMm) : null;
+    const pair = measurement ? {direction: measurement.passages.length ? 'PASS' : 'UNMATCHED', transitMs: null,
+      pending: {sensor: '', at: 0, deviceId: body.deviceId, bootId: body.bootId ?? '', uptimeMs: 0}} : pairSensorEvent(
+      body as SensorEvent,
       {
         sensor: stringField(gate, 'pendingSensor'),
         at: intField(gate, 'pendingAt'),
@@ -330,7 +341,7 @@ export async function POST(request: Request) {
     );
     const passage = pair.direction === 'IN' || pair.direction === 'PASS' || pair.direction === 'OUT';
     const lastPassage = intField(gate, 'lastPassageUptimeMs', -1);
-    const bounce = passage && sameBoot && body.uptimeMs !== undefined &&
+    const bounce = !measurement && passage && sameBoot && body.uptimeMs !== undefined &&
       lastPassage >= 0 && body.uptimeMs - lastPassage < 500;
     const eventFields: Record<string, FirestoreValue> = {
       eventId: { stringValue: body.eventId },
@@ -356,6 +367,7 @@ export async function POST(request: Request) {
         update: {
           name: documentName(gatePath),
           fields: {
+            ...(measurement ? {distanceState: {stringValue: JSON.stringify(measurement.state)}} : {}),
             guardBootId: { stringValue: body.bootId ?? '' },
             guardUptimeMs: { integerValue: String(body.uptimeMs ?? 0) },
             lastPassageUptimeMs: { integerValue: String(
@@ -371,6 +383,7 @@ export async function POST(request: Request) {
         },
         updateMask: {
           fieldPaths: [
+            ...(measurement ? ['distanceState'] : []),
             'guardBootId',
             'guardUptimeMs',
             'lastPassageUptimeMs',
@@ -391,11 +404,10 @@ export async function POST(request: Request) {
         sensorCountingEnabled: cafeteria.fields?.sensorCountingEnabled?.booleanValue,
       });
     if (waitingCountChanged) {
-      const visitors = getNextDailyVisitors({
-        dailyVisitorCount: cafeteria.fields?.dailyVisitorCount?.integerValue === undefined
-          ? undefined : intField(cafeteria, 'dailyVisitorCount'),
-        dailyVisitorDate: stringField(cafeteria, 'dailyVisitorDate'),
-      }, new Date(occurredAt));
+      const countDelta = measurement ? measurement.passages.length : 1;
+      let visitors = { dailyVisitorCount: cafeteria.fields?.dailyVisitorCount?.integerValue === undefined ? undefined : intField(cafeteria, 'dailyVisitorCount'), dailyVisitorDate: stringField(cafeteria, 'dailyVisitorDate') };
+      const captureTimes = measurement ? measurement.passages.map(at => occurredAt - (body.uptimeMs! - at)) : [occurredAt];
+      for (const capture of captureTimes) visitors = getNextDailyVisitors(visitors, new Date(capture));
       const baseCount = Math.max(0, intField(cafeteria, 'waitingCount'));
       const rate = Math.max(1, intField(cafeteria, 'serviceRatePerMinute', 30));
       const updatedAt = Date.parse(
@@ -418,7 +430,7 @@ export async function POST(request: Request) {
         update: {
           name: documentName('cafeterias/main'),
           fields: {
-            waitingCount: { integerValue: String(effectiveCount + 1) },
+            waitingCount: { integerValue: String(effectiveCount + countDelta) },
             serviceProgress: { doubleValue: serviceProgress },
             dailyVisitorCount: { integerValue: String(visitors.dailyVisitorCount) },
             dailyVisitorDate: { stringValue: visitors.dailyVisitorDate },
@@ -442,6 +454,17 @@ export async function POST(request: Request) {
           ],
         },
       });
+    }
+    if (measurement && body.kind === 'distance') {
+      const last = body.frames[body.frames.length - 1];
+      const fields = {distanceProcessingMode: {stringValue: 'server'}, sensorProcessedDistanceMm: {integerValue: String(measurement.state.threshold)}, lastRawDistanceMm: {integerValue: String(last[1])}};
+      const item = writes[writes.length - 1] as {update?: {name: string; fields: Record<string, FirestoreValue>}; updateMask?: {fieldPaths: string[]}; transform?: {fieldTransforms: unknown[]}};
+      if (item.update && item.updateMask) {
+        Object.assign(item.update.fields, fields);
+        item.updateMask.fieldPaths.push(...Object.keys(fields));
+      } else {
+        writes[writes.length - 1] = {update: {name: documentName('cafeterias/main'), fields}, updateMask: {fieldPaths: Object.keys(fields)}, updateTransforms: item.transform?.fieldTransforms ?? []};
+      }
     }
     const commit = await fetch(`${API_ROOT}/documents:commit`, {
       method: 'POST',
