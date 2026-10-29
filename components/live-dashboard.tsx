@@ -50,6 +50,7 @@ export function LiveDashboard() {
     sensorCountingEnabled,
   });
   const showQueue = status.kind === 'open';
+  const showCount = status.showCount;
   const settingsReady = !loading && hasData && (connected || demoMode);
   const estimate = getQueueEstimate(state, now);
   const todayVisitors = getTodayVisitors(state, now);
@@ -144,7 +145,7 @@ export function LiveDashboard() {
           >
             <Card
               aria-busy={loading}
-              className={`order-1 relative overflow-hidden border-0 bg-[linear-gradient(135deg,#0757bd_0%,#0e73dd_56%,#0b5cbc_100%)] text-primary-foreground shadow-[0_20px_50px_-30px_rgba(33,75,155,0.65)] ${showQueue ? 'p-6 sm:p-9' : 'p-5 sm:p-6'}`}
+              className={`order-1 relative overflow-hidden border-0 bg-[linear-gradient(135deg,#0757bd_0%,#0e73dd_56%,#0b5cbc_100%)] text-primary-foreground shadow-[0_20px_50px_-30px_rgba(33,75,155,0.65)] ${showCount ? 'p-6 sm:p-9' : 'p-5 sm:p-6'}`}
             >
               <div
                 aria-hidden="true"
@@ -153,7 +154,7 @@ export function LiveDashboard() {
               <div className="relative">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <h2 className="text-sm font-bold text-blue-100">
-                    {showQueue ? '현재 기다리는 학생' : '급식실 안내'}
+                    {showCount ? '현재 기다리는 학생' : '급식실 안내'}
                   </h2>
                   <span className="flex items-center gap-1.5 text-xs font-semibold text-blue-100">
                     {connected || demoMode ? (
@@ -164,11 +165,11 @@ export function LiveDashboard() {
                     {connectionText}
                   </span>
                 </div>
-                {showQueue && (
+                {showCount && (
                   <div className="mt-7 flex min-h-20 items-end gap-3 sm:mt-9 sm:min-h-32">
-                    <strong className="font-heading text-[clamp(5.5rem,19vw,9rem)] font-black leading-[0.8] tracking-[-0.07em] tabular-nums">
+                    <output aria-label="현재 대기 인원" className="font-heading text-[clamp(5.5rem,19vw,9rem)] font-black leading-[0.8] tracking-[-0.07em] tabular-nums">
                       {estimate.count}
-                    </strong>
+                    </output>
                     <span className="pb-1 text-2xl font-extrabold sm:pb-2 sm:text-3xl">
                       명
                     </span>
@@ -176,7 +177,7 @@ export function LiveDashboard() {
                 )}
                 <div
                   className={
-                    showQueue
+                    showCount
                       ? 'mt-8 border-t border-white/20 pt-5 sm:mt-9'
                       : 'mt-4'
                   }

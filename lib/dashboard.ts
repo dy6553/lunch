@@ -22,6 +22,7 @@ export function getDashboardStatus({
   if (loading)
     return {
       kind: 'loading',
+      showCount: false,
       label: '확인 중',
       headline: '대기 정보를 확인하고 있어요',
       description: '연결이 완료되면 대기 인원과 예상 시간을 안내해 드려요.',
@@ -29,6 +30,7 @@ export function getDashboardStatus({
   if (!hasData || (!connected && !demoMode))
     return {
       kind: 'unavailable',
+      showCount: false,
       label: '정보 확인 불가',
       headline: '지금은 대기 정보를 확인할 수 없어요',
       description:
@@ -37,6 +39,7 @@ export function getDashboardStatus({
   if (status === 'CLOSED')
     return {
       kind: 'closed',
+      showCount: false,
       label: '운영 종료',
       headline: '오늘 배식이 종료됐어요',
       description: '다음 운영 시간에 대기 정보를 확인해 주세요.',
@@ -44,19 +47,22 @@ export function getDashboardStatus({
   if (status === 'PAUSED')
     return {
       kind: 'paused',
+      showCount: true,
       label: '일시 중지',
       headline: '배식을 잠시 멈췄어요',
-      description: '배식이 재개되면 예상 대기 시간을 다시 안내해 드려요.',
+      description: '현재 대기 인원은 계속 표시해요. 배식이 재개되면 예상 대기 시간을 안내해 드려요.',
     } as const;
   if (sensorCountingEnabled && sensorConnected === false)
     return {
       kind: 'sensor-waiting',
+      showCount: false,
       label: '센서 연결 대기',
       headline: '센서 연결을 기다리고 있어요',
       description: '보드와 센서가 연결되면 현재 대기 인원을 안내해 드려요.',
     } as const;
   return {
     kind: 'open',
+    showCount: true,
     label: '운영 중',
     headline: '지금 줄을 서면',
     description: '센서로 확인한 현재 대기 상황이에요.',
