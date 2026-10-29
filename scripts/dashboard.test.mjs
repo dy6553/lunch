@@ -137,3 +137,19 @@ test('manual queue guidance works without a sensor only when sensor counting is 
     assert.equal(getDashboardStatus({ ...connection, status, sensorCountingEnabled: false }).kind, status === 'CLOSED' ? 'closed' : 'paused');
   }
 });
+
+test('paused service shows the saved count while keeping serving estimates stopped', () => {
+  const paused = getDashboardStatus({ ...connection, status: 'PAUSED', sensorConnected: true });
+  assert.equal(paused.showCount, true);
+  assert.equal(paused.kind, 'paused');
+  assert.equal(paused.headline, '배식을 잠시 멈췄어요');
+  assert.deepEqual(getQueueEstimate({ ...state, status: 'PAUSED', waitingCount: 2 }, new Date('2026-10-22T04:30:00Z')), { count: 2, minutes: 1 });
+  assert.equal(getDashboardStatus({ ...connection, status: 'PAUSED', sensorConnected: false }).showCount, true);
+});
+
+test('a paused setting never exposes a count before data is available', () => {
+  for (const overrides of [{ loading: true }, { connected: false }, { hasData: false }]) {
+    assert.equal(getDashboardStatus({ ...connection, status: 'PAUSED', ...overrides }).showCount, false);
+  }
+  assert.equal(getDashboardStatus({ ...connection, status: 'CLOSED' }).showCount, false);
+});
