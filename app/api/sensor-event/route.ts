@@ -181,13 +181,6 @@ function stringField(
   return document?.fields?.[field]?.stringValue ?? fallback;
 }
 
-function boolField(
-  document: FirestoreDocument | null,
-  field: string,
-  fallback = false,
-) {
-  return document?.fields?.[field]?.booleanValue ?? fallback;
-}
 
 export async function GET() {
   return Response.json({
@@ -474,8 +467,7 @@ export async function POST(request: Request) {
       const elapsed = Number.isFinite(updatedAt)
         ? Math.max(0, (serverNow - updatedAt) / 60000)
         : 0;
-      const serving = stringField(cafeteria, 'status') === 'OPEN' &&
-        boolField(cafeteria, 'autoDecreaseEnabled');
+      const serving = stringField(cafeteria, 'status') === 'OPEN';
       const progressValue = cafeteria.fields?.serviceProgress;
       const previousProgress = Number(progressValue?.doubleValue ?? progressValue?.integerValue ?? 0);
       const consumed = serving ? elapsed * rate + (Number.isFinite(previousProgress) ? previousProgress : 0) : 0;

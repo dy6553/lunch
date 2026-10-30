@@ -63,7 +63,7 @@ export function getCafeteriaSettings(state: CafeteriaState) {
     sensorCountingEnabled: getSensorCountingEnabled(state),
     sensorDetectDistanceMm: getSensorDistanceSettings(state).detectDistanceMm,
     serviceRatePerMinute: state.serviceRatePerMinute,
-    autoDecreaseEnabled: state.autoDecreaseEnabled,
+    autoDecreaseEnabled: true,
     serviceStartsAt: state.serviceStartsAt,
     serviceEndsAt: state.serviceEndsAt,
     trafficRecordingStartsAt: getTrafficRecordingSettings(state).startsAt,

@@ -7,7 +7,7 @@ import { ArrowLeft, ImageUp, LoaderCircle, LogOut, Minus, Plus, RotateCcw, Save,
 import { Card } from '@/components/ui/card';
 import { auth, db, isFirebaseConfigured } from '@/lib/firebase';
 import { getCafeteriaSettings, getSensorCountingEnabled, getSensorDistanceSettings, getTrafficRecordingSettings, type CafeteriaState } from '@/lib/cafeteria';
-import { getQueueEstimate, getSensorConnection } from '@/lib/dashboard';
+import { getQueueEstimate, getSensorConnection, getSensorDistanceDisplay } from '@/lib/dashboard';
 import { adjustDailyVisitors, getTodayVisitors } from '@/lib/visitors';
 import { useCafeteria } from '@/hooks/use-cafeteria';
 import { getKoreanDateKey, useDailyMenu } from '@/hooks/use-daily-menu';
@@ -35,6 +35,7 @@ export function AdminDashboard() {
     return () => window.clearInterval(timer);
   }, []);
   const sensorConnection = getSensorConnection(state, now);
+  const sensorDistance = getSensorDistanceDisplay(state, now);
   const displayedCount = countDraft ?? getQueueEstimate(state, now).count;
   const todayVisitors = getTodayVisitors(state, now);
   const reductionAmount = Number(visitorReduction);
@@ -124,7 +125,6 @@ export function AdminDashboard() {
         } as CafeteriaState;
         const timingChanged = !snapshot.exists() ||
           current.status !== draft.status ||
-          current.autoDecreaseEnabled !== draft.autoDecreaseEnabled ||
           current.serviceRatePerMinute !== draft.serviceRatePerMinute;
         // A settings save must not replace a newer sensor count or heartbeat.
         // Settle the estimate only when its timing/rate is actually changing.
@@ -373,19 +373,25 @@ export function AdminDashboard() {
           {!sensorConnection.connected && <p className="mt-2 text-xs text-amber-800">보드 전원과 Wi-Fi를 확인해 주세요. 재연결되면 자동으로 갱신됩니다.</p>}
         </details>
         <div className="mt-4 grid items-start gap-4 lg:grid-cols-[0.85fr_1.15fr]">
-          <Card aria-label="인원 현황" className="gap-3 bg-primary p-4 sm:p-5 text-primary-foreground shadow-xl shadow-blue-950/10">
+          <Card aria-label="인원 현황" className="gap-0 overflow-hidden p-0 shadow-sm">
+            <section aria-label="대기 인원 관리" className="grid gap-3 bg-primary p-5 text-primary-foreground">
             <div className="flex items-center justify-between"><p className="text-sm font-bold text-blue-100">현재 대기 인원</p><span className="flex items-center gap-1.5 text-xs font-bold text-blue-100"><Wifi className="size-3.5" /> {connected ? '실시간 연결' : isFirebaseConfigured ? '연결 확인 중' : '미리보기'}</span></div>
             <div className="flex items-end gap-2"><strong className="text-6xl font-black leading-none tracking-[-0.08em]">{displayedCount}</strong><span className="pb-2 text-xl font-black">명</span></div>
             <div className="grid grid-cols-2 gap-3"><button disabled={saving || loading || (isFirebaseConfigured && !connected)} onClick={() => saveCount({ delta: -1 }, '대기 인원을 1명 줄였습니다.')} className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-white/12 text-lg font-black hover:bg-white/20 disabled:opacity-50"><Minus className="size-5" /> 1명</button><button disabled={saving || loading || (isFirebaseConfigured && !connected)} onClick={() => saveCount({ delta: 1 }, '대기 인원을 1명 늘렸습니다.')} className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-white text-lg font-black text-primary hover:bg-blue-50 disabled:opacity-50"><Plus className="size-5" /> 1명</button></div>
             <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2"><label className="grid min-w-0 gap-1 text-sm font-bold text-blue-100">직접 입력<input disabled={saving || loading || (isFirebaseConfigured && !connected)} className="h-10 w-full min-w-0 rounded-xl border-0 bg-white/12 px-4 text-lg font-black text-white outline-none ring-1 ring-white/20 focus:ring-2 focus:ring-white/50" type="number" min="0" value={displayedCount} onChange={(e) => setCountDraft(Math.max(0, Math.min(10000, Math.trunc(Number(e.target.value) || 0))))} onBlur={() => { if (countDraft !== null) void saveCount({ value: countDraft }); }} /></label><button disabled={saving || loading || (isFirebaseConfigured && !connected)} onClick={() => { if (window.confirm('대기 인원을 0명으로 초기화할까요?')) void saveCount({ value: 0 }, '대기 인원을 초기화했습니다.'); }} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-white/30 bg-white/10 px-3 text-xs font-bold text-white hover:bg-white/20 disabled:opacity-50"><RotateCcw className="size-4" /> 인원 초기화</button></div>
-        <section aria-labelledby="admin-visitors-title" className="grid gap-2 rounded-xl bg-white p-4 text-foreground">
+            </section>
+            <section aria-label="관리자 센서 측정 거리" className="flex flex-wrap items-center justify-between gap-3 border-b bg-sky-50/50 px-5 py-4">
+              <div><p className="text-xs font-semibold text-muted-foreground">{sensorDistance.label}</p><output aria-label="관리자 센서 측정값" className="mt-1 block text-2xl font-extrabold tabular-nums">{loading ? '확인 중' : sensorDistance.value}</output></div>
+              <div className="text-right text-xs leading-relaxed text-muted-foreground">인식 기준 <strong className="font-bold text-foreground">{getSensorDistanceSettings(state).detectDistanceMm / 10}cm</strong><p>{sensorConnection.label}</p></div>
+            </section>
+        <section aria-labelledby="admin-visitors-title" className="grid gap-3 p-5 text-foreground">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div><h2 id="admin-visitors-title" className="text-base font-extrabold tracking-tight">오늘 누적 방문</h2></div>
+            <div><h2 id="admin-visitors-title" className="text-base font-extrabold tracking-tight">오늘 누적 방문</h2><p className="mt-1 text-xs text-muted-foreground">오늘 센서로 집계한 방문 인원</p></div>
             <output aria-label="관리자 오늘 누적 방문" className="text-3xl font-black tabular-nums">{todayVisitors === null ? '확인 중' : todayVisitors.toLocaleString('ko-KR') + '명'}</output>
           </div>
           <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => { event.preventDefault(); if (validReduction) void saveVisitors({ subtract: reductionAmount }); }}>
             <label className="grid min-w-0 flex-1 gap-1 text-xs font-bold">줄일 인원<input aria-label="줄일 누적 방문 인원" type="number" min="1" step="1" max={Number.MAX_SAFE_INTEGER} required disabled={visitorControlsDisabled} value={visitorReduction} onChange={(event) => setVisitorReduction(event.target.value)} className="h-10 w-full min-w-0 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" /></label>
-            <button type="submit" disabled={visitorControlsDisabled || !validReduction} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary px-3 text-sm font-extrabold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"><Minus className="size-4" /> 인원 줄이기</button>
+            <button type="submit" disabled={visitorControlsDisabled || !validReduction} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border bg-white px-3 text-sm font-bold hover:bg-muted disabled:opacity-50"><Minus className="size-4" /> 인원 줄이기</button>
             <button type="button" disabled={visitorControlsDisabled} onClick={() => { if (window.confirm('오늘 누적 방문을 0명으로 초기화할까요?')) void saveVisitors({ reset: true }); }} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 text-sm font-extrabold text-rose-700 hover:bg-rose-100 disabled:opacity-50"><RotateCcw className="size-4" /> 0명으로 초기화</button>
           </form>
           {visitorMessage && <output aria-live="polite" className="block rounded-xl bg-blue-50 px-4 py-3 text-sm font-bold text-blue-800">{visitorMessage}</output>}
@@ -393,8 +399,8 @@ export function AdminDashboard() {
         </section>
           </Card>
 
-          <Card className="gap-3 p-4 shadow-sm sm:p-5">
-            <div><h1 className="text-xl font-black tracking-tight">운영 설정</h1><p className="mt-1 text-sm text-muted-foreground">배식 운영과 센서 집계를 따로 설정하고 저장하세요.</p></div>
+          <Card className="gap-4 p-5 shadow-sm">
+            <div><h1 className="text-xl font-black tracking-tight">운영 설정</h1><p className="mt-1 text-sm text-muted-foreground">배식 상태와 인식·기록 기준을 관리해요.</p></div>
             <fieldset disabled={saving || loading || (isFirebaseConfigured && !connected)} className="grid items-start gap-3 sm:grid-cols-2 xl:grid-cols-3">
               <label className="grid min-w-0 gap-1 text-sm font-bold">센서 감지 거리 (cm)<input aria-label="센서 감지 거리 (cm)" className="h-11 w-full min-w-0 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="number" min="10" max="200" step="1" value={distanceInput ?? String(getSensorDistanceSettings(draft).detectDistanceMm / 10)} onChange={(event) => { const text = event.target.value; setDistanceInput(text); const cm = Number(text); if (text.trim() && Number.isSafeInteger(cm) && cm >= 10 && cm <= 200) editSettings({sensorDetectDistanceMm: cm * 10}); }} /><span className="text-xs font-normal leading-relaxed text-muted-foreground">{!validDistance ? '10~200cm 사이의 정수를 입력해 주세요. ' : ''}10~200cm · 비워짐 기준 {getSensorDistanceSettings(draft).clearDistanceMm / 10}cm</span></label>
               <label className="grid min-w-0 gap-1 text-sm font-bold">분당 배식 인원<input className="h-11 w-full min-w-0 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="number" min="1" max="120" value={draft.serviceRatePerMinute} onChange={(e) => editSettings({ serviceRatePerMinute: Math.max(1, Math.min(120, Math.trunc(Number(e.target.value) || 1))) })} /></label>
@@ -402,8 +408,9 @@ export function AdminDashboard() {
               <label className="grid min-w-0 gap-1 text-sm font-bold">급식 시작<input className="h-11 w-full min-w-0 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="time" value={draft.serviceStartsAt} onChange={(e) => editSettings({ serviceStartsAt: e.target.value })} /></label>
               <label className="grid min-w-0 gap-1 text-sm font-bold">급식 종료<input className="h-11 w-full min-w-0 rounded-xl border bg-white px-3 font-semibold outline-none focus:ring-2 focus:ring-primary/30" type="time" value={draft.serviceEndsAt} onChange={(e) => editSettings({ serviceEndsAt: e.target.value })} /></label>
             </fieldset>
-            <label className="flex items-center justify-between gap-4 rounded-xl bg-sky-50 p-3"><span><span className="block text-sm font-extrabold">센서 인원 집계 반영</span><span className="mt-1 block text-xs text-muted-foreground">켜면 센서 통과 인원을 대기 인원에 더합니다. 배식 시작 전에도 사용할 수 있어요.</span></span><input aria-label="센서 인원 집계 반영" disabled={saving || loading || (isFirebaseConfigured && !connected)} className="size-5 shrink-0 accent-primary" type="checkbox" checked={getSensorCountingEnabled(draft)} onChange={(e) => editSettings({ sensorCountingEnabled: e.target.checked })} /></label>
-            <label className="flex items-center justify-between gap-4 rounded-xl bg-muted/70 p-3"><span><span className="block text-sm font-extrabold">시간에 따라 자동 감소</span><span className="mt-1 block text-xs text-muted-foreground">배식 중에만 설정한 속도로 대기 인원을 줄입니다.</span></span><input aria-label="시간에 따라 자동 감소" disabled={saving || loading || (isFirebaseConfigured && !connected)} className="size-5 shrink-0 accent-primary" type="checkbox" checked={draft.autoDecreaseEnabled} onChange={(e) => editSettings({ autoDecreaseEnabled: e.target.checked })} /></label>
+            <label className="flex items-center justify-between gap-4 rounded-xl bg-sky-50 p-3"><span><span className="block text-sm font-extrabold">센서 인원 집계 반영</span><span className="mt-1 block text-xs text-muted-foreground">통과 인원을 자동으로 반영해요. 배식 전에도 사용할 수 있어요.</span></span><input aria-label="센서 인원 집계 반영" disabled={saving || loading || (isFirebaseConfigured && !connected)} className="size-5 shrink-0 accent-primary" type="checkbox" checked={getSensorCountingEnabled(draft)} onChange={(e) => editSettings({ sensorCountingEnabled: e.target.checked })} /></label>
+
+            <p className="text-xs leading-relaxed text-muted-foreground">배식 중에는 분당 배식 인원에 맞춰 대기 인원이 자동으로 줄어듭니다. 일시 중지·종료 시에는 멈춥니다.</p>
             <fieldset disabled={saving || loading || (isFirebaseConfigured && !connected)} className="grid gap-2 rounded-xl border p-3">
               <legend className="px-1 text-sm font-extrabold">5분별 기록 시간</legend>
               <div className="grid grid-cols-2 gap-3">

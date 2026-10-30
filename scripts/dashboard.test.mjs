@@ -100,12 +100,12 @@ test('queue estimate decreases with service and never becomes negative', () => {
   });
 });
 
-test('paused service and disabled auto decrease preserve the measured count', () => {
+test('paused service preserves counts and a legacy disabled flag cannot stop serving consumption', () => {
   const now = new Date('2026-10-22T03:35:00Z');
   assert.equal(getQueueEstimate({ ...state, status: 'PAUSED' }, now).count, 48);
   assert.equal(
     getQueueEstimate({ ...state, autoDecreaseEnabled: false }, now).count,
-    48,
+    0,
   );
 });
 

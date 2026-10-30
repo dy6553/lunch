@@ -32,6 +32,7 @@ export const setDoc = () => { throw Error('Unexpected setDoc'); };
 export const writeBatch = () => { throw Error('Unexpected batch'); };
 export const useCafeteria = () => ({state: globalThis.__visitorHarness.initial, connected: globalThis.__visitorHarness.connected, loading: false});
 export const getQueueEstimate = state => ({count: state.waitingCount, minutes: 0});
+export const getSensorDistanceDisplay = () => ({label:'현재 측정 거리',value:'42.0cm'});
 export const getSensorConnection = () => ({label: 'connected', connected: true});
 export const getSensorCountingEnabled = () => true;
 export const getKoreanDateKey = () => '2026-10-29';

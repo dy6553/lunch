@@ -791,3 +791,14 @@ test('recording hours filter individual batch passages but never stop queue or d
     assert.equal(counts.b1235,undefined);
   } finally { Date.now=realNow; }
 });
+
+
+test('serving consumption is automatic even for a legacy disabled setting', async () => {
+  reset();
+  const fields = docs.get('cafeterias/main').fields;
+  fields.autoDecreaseEnabled = {booleanValue:false};
+  fields.updatedAt = {timestampValue:new Date(Date.now()-60000).toISOString()};
+  const result = await post({...event,sensorMode:'single'});
+  assert.equal(result.status,200);
+  assert.equal(fields.waitingCount.integerValue,'1');
+});
