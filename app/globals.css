@@ -137,23 +137,10 @@ body {
   }
 }
 
-/* Keep the administrator's controls calm and consistent without changing the student screen. */
-.admin-workspace {
-  --background: #f5f7fa;
-  --foreground: #1e293b;
-  --card-foreground: #1e293b;
-  --primary: #2563eb;
-  --primary-foreground: #ffffff;
-  --muted: #f1f5f9;
-  --muted-foreground: #526176;
-  --border: #dce3ec;
-  --input: #dce3ec;
-}
-
+/* Preserve the site palette while keeping administrator controls consistent. */
 .admin-workspace [data-slot='card'] {
   border-radius: 18px;
   box-shadow: 0 2px 8px rgb(15 23 42 / 3%);
-  --tw-ring-color: #e0e6ee;
 }
 
 .admin-workspace :is(button, a, input, select, textarea):focus-visible {
