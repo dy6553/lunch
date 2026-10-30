@@ -24,6 +24,7 @@ import {
   getSensorConnection,
   getSensorDistanceDisplay,
 } from '@/lib/dashboard';
+import { useNextMenu } from '@/hooks/use-next-menu';
 import { useCafeteria } from '@/hooks/use-cafeteria';
 import { getKoreanDateKey, useDailyMenu } from '@/hooks/use-daily-menu';
 
@@ -32,6 +33,8 @@ export function LiveDashboard() {
   const [now, setNow] = useState<Date | null>(null);
   const today = getKoreanDateKey(now ?? new Date());
   const { menu, loading: menuLoading, error: menuError } = useDailyMenu(today);
+  const next = useNextMenu(today);
+  const nextMenuItems = parseMenuText(next.menu?.menuText ?? '');
   const menuSource = getPublishedMenuSource(today);
   const menuItems = parseMenuText(menu?.menuText ?? '');
 
@@ -95,7 +98,7 @@ export function LiveDashboard() {
 
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 pb-6 pt-5 sm:px-6 sm:pt-6">
+      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-3 pb-3 pt-3 sm:px-4 sm:pt-4">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
@@ -141,14 +144,14 @@ export function LiveDashboard() {
           </span>
         </section>
 
-        <div className="grid items-start gap-4 py-5 md:grid-cols-2 md:gap-5">
+        <div className="grid items-start gap-3 py-3 md:grid-cols-2">
           <section
             aria-label="현재 대기 안내"
             className="contents md:grid md:content-start md:gap-3"
           >
             <Card
               aria-busy={loading}
-              className={`order-1 relative overflow-hidden border-0 bg-[linear-gradient(135deg,#0757bd_0%,#0e73dd_56%,#0b5cbc_100%)] text-primary-foreground shadow-[0_20px_50px_-30px_rgba(33,75,155,0.65)] ${showCount ? 'p-6 sm:p-9' : 'p-5 sm:p-6'}`}
+              className={`order-1 relative overflow-hidden border-0 bg-[linear-gradient(135deg,#0757bd_0%,#0e73dd_56%,#0b5cbc_100%)] text-primary-foreground shadow-[0_20px_50px_-30px_rgba(33,75,155,0.65)] p-4 sm:p-5`}
             >
               <div
                 aria-hidden="true"
@@ -169,8 +172,8 @@ export function LiveDashboard() {
                   </span>
                 </div>
                 {showCount && (
-                  <div className="mt-7 flex min-h-20 items-end gap-3 sm:mt-9 sm:min-h-32">
-                    <output aria-label="현재 대기 인원" className="font-heading text-[clamp(5.5rem,19vw,9rem)] font-black leading-[0.8] tracking-[-0.07em] tabular-nums">
+                  <div className="mt-4 flex items-end gap-2">
+                    <output aria-label="현재 대기 인원" className="font-heading text-[clamp(4.5rem,13vw,6.5rem)] font-black leading-[0.8] tracking-[-0.07em] tabular-nums">
                       {estimate.count}
                     </output>
                     <span className="pb-1 text-2xl font-extrabold sm:pb-2 sm:text-3xl">
@@ -181,7 +184,7 @@ export function LiveDashboard() {
                 <div
                   className={
                     showCount
-                      ? 'mt-8 border-t border-white/20 pt-5 sm:mt-9'
+                      ? 'mt-4 border-t border-white/20 pt-3'
                       : 'mt-4'
                   }
                 >
@@ -214,7 +217,7 @@ export function LiveDashboard() {
               </div>
             </Card>
 
-            <Card aria-labelledby="daily-visitors-title" className="order-2 gap-2 px-5 py-4 shadow-sm">
+            <Card aria-labelledby="daily-visitors-title" className="order-2 gap-2 px-4 py-3 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 id="daily-visitors-title" className="flex items-center gap-2 text-sm font-bold text-muted-foreground">
                   <UsersRound aria-hidden="true" className="size-4" /> 오늘 누적 방문
@@ -235,7 +238,7 @@ export function LiveDashboard() {
             </Card>
 
             {showQueue && (
-              <Card className="order-3 gap-4 bg-card p-5 shadow-sm sm:p-6">
+              <Card className="order-3 gap-3 bg-card p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h2 className="text-sm font-bold text-muted-foreground">
@@ -274,7 +277,7 @@ export function LiveDashboard() {
               </Card>
             )}
             <div className="order-4 space-y-1.5 px-1 text-xs leading-relaxed text-muted-foreground">
-              <div aria-label="센서 인식 거리" className="mb-3 rounded-xl border bg-card px-4 py-3">
+              <div aria-label="센서 인식 거리" className="mb-2 rounded-xl border bg-card px-3 py-2.5">
                 <p className="font-bold text-foreground">센서 인식 거리</p>
                 <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
                   <div className="flex gap-1"><dt>{sensorDistance.label}</dt><dd aria-label="센서 측정 거리" className="font-bold text-foreground">{settingsReady ? sensorDistance.value : loading ? '확인 중' : '확인 불가'}</dd></div>
@@ -300,7 +303,7 @@ export function LiveDashboard() {
             <section
               aria-labelledby="daily-menu-title"
               aria-busy={menuLoading}
-              className="order-2 rounded-2xl border border-sky-200 bg-sky-50 p-5 shadow-sm"
+              className="order-2 rounded-2xl border border-sky-200 bg-sky-50 p-4 shadow-sm"
             >
               <div className="flex items-center gap-3">
                 <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground">
@@ -335,11 +338,11 @@ export function LiveDashboard() {
                   메뉴 정보를 불러오지 못했어요. 연결을 확인해 주세요.
                 </p>
               ) : menuItems.length ? (
-                <ul className="mt-4 flex flex-wrap gap-2">
+                <ul className="mt-3 flex flex-wrap gap-1.5">
                   {menuItems.map((item, index) => (
                     <li
                       key={`${item.name}-${index}`}
-                      className="inline-flex max-w-full items-center gap-1.5 rounded-xl border border-sky-200 bg-white px-3 py-2 text-sm text-sky-950"
+                      className="inline-flex max-w-full items-center gap-1.5 rounded-xl border border-sky-200 bg-white px-2.5 py-1.5 text-sm text-sky-950"
                     >
                       <span className="min-w-0 flex-1 break-keep font-bold leading-relaxed [overflow-wrap:anywhere]">
                         {item.name}
@@ -379,12 +382,30 @@ export function LiveDashboard() {
                 </div>
               )}
             </section>
+            <section aria-labelledby="next-menu-title" aria-busy={next.loading}
+              className="order-2 rounded-2xl border bg-card p-4 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 id="next-menu-title" className="text-base font-extrabold">다음 급식</h2>
+                {next.menu && <p className="text-xs font-bold text-primary">{new Date(`${next.menu.date}T12:00:00+09:00`).toLocaleDateString('ko-KR', {
+                  month: 'long', day: 'numeric', weekday: 'short', timeZone: 'Asia/Seoul',
+                })}</p>}
+              </div>
+              {next.loading ? <p className="mt-3 text-sm text-muted-foreground">다음 급식 메뉴를 불러오고 있어요…</p>
+                : next.error ? <p className="mt-3 text-sm text-muted-foreground">다음 급식 정보를 불러오지 못했어요. 연결을 확인해 주세요.</p>
+                  : nextMenuItems.length ? <ul className="mt-3 flex flex-wrap gap-1.5">{nextMenuItems.map((item, index) => (
+                    <li key={`${item.name}-${index}`} className="inline-flex max-w-full items-center gap-1.5 rounded-xl border bg-sky-50/60 px-2.5 py-1.5 text-sm">
+                      <span className="min-w-0 break-keep font-semibold [overflow-wrap:anywhere]">{item.name}</span>
+                      {item.optional && <span className="shrink-0 rounded-md bg-emerald-50 px-1.5 py-1 text-[10px] font-bold text-emerald-700">자율배식</span>}
+                    </li>
+                  ))}</ul> : <p className="mt-3 text-sm text-muted-foreground">다음 급식 메뉴가 아직 등록되지 않았어요.</p>}
+              {next.menu?.note && <p className="mt-2 text-xs text-muted-foreground">{next.menu.note}</p>}
+            </section>
           </div>
         </div>
 
         <TrafficTable today={today} now={now} startsAt={state.serviceStartsAt} endsAt={state.serviceEndsAt} />
 
-        <aside className="mb-3 mt-5 flex items-start gap-2 border-t border-border/70 pt-3 text-muted-foreground">
+        <aside className="mb-2 mt-3 flex items-start gap-2 border-t border-border/70 pt-3 text-muted-foreground">
           <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
           <p className="text-xs leading-relaxed">
             센서 집계와 예상 대기 시간은 실제와 다를 수 있어요. 현장 상황을 함께

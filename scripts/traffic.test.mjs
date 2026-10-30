@@ -74,3 +74,13 @@ test('historical daily tables remain bounded and end midnight as 24:00', () => {
   assert.equal(rows.at(-1).end, '24:00');
   assert.deepEqual(trafficRows({ date: 'invalid', counts: {}, recordingStartedAt: null, lastObservedAt: null }, new Date()), []);
 });
+
+// Future menus may have gaps (school holidays/exams) and explicit empty overrides.
+const { selectNextMenu } = await import('../lib/next-menu.ts');
+test('next meal uses the first registered future school menu across month boundaries', () => {
+  const menu = (date, menuText = '밥\n국') => ({ date, menuText, updatedAt: null });
+  const excluded = date => ['2026-10-31', '2026-11-01', '2026-11-03'].includes(date);
+  const result = selectNextMenu('2026-10-30', [menu('2026-11-04'), menu('2026-10-30'), menu('2026-11-02', ''), menu('2026-11-03'), menu('2026-10-31')], excluded);
+  assert.equal(result.date, '2026-11-04');
+  assert.equal(selectNextMenu('2026-11-04', [result], excluded), null);
+});
