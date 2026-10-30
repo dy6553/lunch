@@ -9,6 +9,9 @@ const visitorsUrl = new URL('../lib/visitors.ts', import.meta.url).href;
 const cafeteriaUrl = new URL('../lib/cafeteria.ts', import.meta.url).href;
 const mockSource = `
 export { getSensorDistanceSettings, getCafeteriaSettings, getTrafficRecordingSettings } from ${JSON.stringify(cafeteriaUrl)};
+export { trafficDocumentPath } from ${JSON.stringify(new URL('../lib/traffic.ts', import.meta.url).href)};
+export const TrafficTable = 'traffic-table';
+export const deleteDoc = reference => globalThis.__visitorHarness.deleteTraffic(reference);
 export { adjustDailyVisitors, getTodayVisitors } from ${JSON.stringify(visitorsUrl)};
 export const jsx = (type, props) => ({ type, props });
 export const jsxs = jsx;
@@ -25,7 +28,7 @@ export const GoogleAuthProvider = class {};
 export const onAuthStateChanged = () => () => {};
 export const signInWithPopup = async () => {};
 export const signOut = async () => {};
-export const doc = () => 'cafeterias/main';
+export const doc = (_db, ...parts) => parts.join('/');
 export const serverTimestamp = () => 'server-time';
 export const runTransaction = (...args) => globalThis.__visitorHarness.transact(...args);
 export const setDoc = () => { throw Error('Unexpected setDoc'); };
@@ -149,6 +152,31 @@ test('typing 150 cm keeps intermediate digits and never silently clamps the sett
   const nodes = render();
   const save = nodes.find(node => node.type === 'button' && JSON.stringify(node.props.children).includes('설정 저장'));
   assert.equal(save.props.disabled, true);
+});
+
+test('traffic deletion targets only the selected day and preserves live totals', async () => {
+  const {h, allNodes} = setup();
+  const deleted = [];
+  const before = {...h.current};
+  h.deleteTraffic = async reference => { deleted.push(reference); };
+  const table = allNodes.find(node => node.type === 'traffic-table');
+  assert.ok(table);
+  await table.props.onDeleteDate('2026-10-28');
+  assert.deepEqual(deleted, ['cafeterias/main-traffic-2026-10-28']);
+  assert.deepEqual(h.current, before);
+  await assert.rejects(table.props.onDeleteDate('../main'));
+  assert.equal(deleted.length, 1);
+});
+
+test('traffic deletion refuses disconnected writes and propagates denied writes', async () => {
+  const {h, allNodes} = setup({connected:false});
+  const offline = allNodes.find(node => node.type === 'traffic-table');
+  assert.equal(offline.props.deleteDisabled, true);
+  h.deleteTraffic = async () => { throw Error('permission-denied'); };
+  await assert.rejects(offline.props.onDeleteDate('2026-10-28'), /관리자 연결/);
+  const online = setup();
+  online.h.deleteTraffic = async () => { throw Error('permission-denied'); };
+  await assert.rejects(online.allNodes.find(node => node.type === 'traffic-table').props.onDeleteDate('2026-10-28'), /permission-denied/);
 });
 
 test.after(() => { delete globalThis.__visitorHarness; delete globalThis.window; });
