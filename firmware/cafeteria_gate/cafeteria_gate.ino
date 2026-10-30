@@ -24,11 +24,11 @@ constexpr uint8_t STABLE_SAMPLES = 3;
 // A brief gap between an arm and torso must not re-arm the counter.
 constexpr uint32_t CLEAR_HOLD_MS = 500;
 constexpr uint32_t HEARTBEAT_MS = 10000;
-constexpr uint32_t RAW_BATCH_MS = 240;
+constexpr uint32_t RAW_BATCH_MS = 120;
 constexpr uint32_t RAW_IDLE_REFRESH_MS = 2000;
 constexpr uint32_t MAX_EVENT_AGE_MS = 300000;
 constexpr char DEVICE_ID[] = "cafeteria-gate-01";
-constexpr char FIRMWARE_VERSION[] = "1.9.0";
+constexpr char FIRMWARE_VERSION[] = "1.9.1";
 WifiSetup wifiSetup;
 
 // Both supported chips can be used, including one of each in two-sensor mode.
@@ -204,7 +204,8 @@ void sampleRaw(DistanceSensor& sensor, BeamState& health) {
   batch.frames[batch.count++] = RawFrame{captured, mm, quality};
   batch.uptimeMs = captured;
   batch.occurredAtMs = clockReady() ? epochMs() : 0;
-  if (batch.count < 20 && batch.uptimeMs - batch.frames[0].at < RAW_BATCH_MS && batch.uptimeMs - sentAt < RAW_IDLE_REFRESH_MS) return;
+  const bool signalChanged = sentQuality != quality || abs(int(sentMm) - int(mm)) > 20;
+  if (!signalChanged && batch.count < 20 && batch.uptimeMs - batch.frames[0].at < RAW_BATCH_MS && batch.uptimeMs - sentAt < RAW_IDLE_REFRESH_MS) return;
   bool unchanged = sentQuality == quality && abs(int(sentMm) - int(mm)) <= 20;
   for (uint8_t i = 0; i < batch.count; ++i)
     if (batch.frames[i].quality != quality || abs(int(batch.frames[i].mm) - int(mm)) > 20) unchanged = false;
@@ -320,13 +321,20 @@ int postJson(const String& json) {
   if (!http.begin(client, SENSOR_API_URL)) return -1;
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-Device-Key", SENSOR_DEVICE_KEY);
+  const bool reusedSocket = client.connected();
+  const uint64_t requestStart = uptimeMs();
   const int status = http.POST(json);
   // A 2xx transport response alone is insufficient if the body is malformed.
   const String response = http.getString();
   if (json.indexOf("\"kind\":\"event\"") >= 0 && status >= 200 && status < 300) {
     Serial.printf("SERVER RESULT: %s\n", response.c_str());
   }
+  const uint64_t responseAt = uptimeMs();
+  Serial.printf("HTTP TIMING start=%llu done=%llu rtt=%llu reusedSocket=%u status=%d\n",
+    (unsigned long long)requestStart, (unsigned long long)responseAt,
+    (unsigned long long)(responseAt-requestStart), reusedSocket, status);
   http.end();
+  if (status < 0) client.stop();
   if (response.indexOf("\"servingStatus\":\"CLOSED\"") >= 0) Serial.println("SITE CLOSED: connection is ready; enable serving in /admin to display the queue.");
   if (response.indexOf("\"servingStatus\":\"PAUSED\"") >= 0) Serial.println("SITE PAUSED: connection is ready; resume serving in /admin when appropriate.");
   if (status >= 200 && status < 300 && response.indexOf("\"ok\":true") < 0) return -2;
@@ -402,7 +410,10 @@ void networkTask(void*) {
       Serial.println(SENSOR_COUNT == 2 ? "SERVER OK: paired sensor events enabled." : "SERVER OK: single-sensor passage counting enabled.");
     }
     const bool readyNow = sensorsReady.load();
-    if (millis() - lastHeartbeat >= HEARTBEAT_MS || readyNow != lastSensorsReady) {
+    const bool dataPending = SENSOR_COUNT == 1 ? haveRaw || uxQueueMessagesWaiting(rawQueue) > 0 : haveEvent || uxQueueMessagesWaiting(eventQueue) > 0;
+    // Data wins the regular heartbeat slot; bound deferral even under continuous traffic.
+    if (readyNow != lastSensorsReady || millis() - lastHeartbeat >= HEARTBEAT_MS + 2000 ||
+        (!dataPending && millis() - lastHeartbeat >= HEARTBEAT_MS)) {
       const String json = baseMessage("heartbeat") + ",\"sensorsReady\":" +
         (readyNow ? "true" : "false") + ",\"firmwareVersion\":\"" + FIRMWARE_VERSION + "\",\"pendingEvents\":" + String(SENSOR_COUNT == 1 ? uxQueueMessagesWaiting(rawQueue) + (haveRaw ? 1 : 0) : uxQueueMessagesWaiting(eventQueue) + (haveEvent ? 1 : 0)) + ",\"droppedEvents\":" + String(droppedEvents.load()) + ",\"wifiRssi\":" + String(WiFi.RSSI()) + "}";
       const int status = postJson(json);
@@ -440,12 +451,21 @@ void networkTask(void*) {
         json += "[" + uint64String(uploadFrames[i].at) + "," + String(uploadFrames[i].mm) + "," + String(uploadFrames[i].quality) + "]";
       }
       json += "],\"firmwareVersion\":\"" + String(FIRMWARE_VERSION) + "\"}";
+      const uint64_t sendStart = uptimeMs();
+      Serial.printf("RAW TIMING first=%llu last=%llu send=%llu oldestAge=%llu newestAge=%llu frames=%u queued=%u bytes=%u\n",
+        (unsigned long long)uploadFrames[0].at, (unsigned long long)raw.uptimeMs, (unsigned long long)sendStart,
+        (unsigned long long)(sendStart-uploadFrames[0].at), (unsigned long long)(sendStart-raw.uptimeMs),
+        uploadCount, (unsigned)uxQueueMessagesWaiting(rawQueue), (unsigned)json.length());
       const int status = postJson(json);
       Serial.printf("RAW DISTANCE UPLOAD #%lu HTTP %d\n", static_cast<unsigned long>(raw.sequence), status);
       if (success(status) || (status >= 400 && status < 500 && status != 401 && status != 403 && status != 408 && status != 429)) {
         if (!success(status)) droppedEvents.fetch_add(1);
         haveRaw = false;
-      } else { if (status == 401 || status == 403) verified = false; vTaskDelay(pdMS_TO_TICKS(1000)); }
+        uploadFailures = 0;
+      } else {
+        if (status == 401 || status == 403 || ++uploadFailures >= 3) { verified = false; networkReady.store(false); uploadFailures = 0; }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+      }
       continue;
     }
     if (!haveEvent) haveEvent = xQueueReceive(eventQueue, &event, pdMS_TO_TICKS(50)) == pdTRUE;
