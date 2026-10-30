@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
-import { doc, runTransaction, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
+import { deleteDoc, doc, runTransaction, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 import { ArrowLeft, ImageUp, LoaderCircle, LogOut, Minus, Plus, RotateCcw, Save, Settings2, Sparkles, Utensils, Wifi } from 'lucide-react';
 import { Card } from '@/components/ui/card';
+import { TrafficTable } from '@/components/traffic-table';
+import { trafficDocumentPath } from '@/lib/traffic';
 import { auth, db, isFirebaseConfigured } from '@/lib/firebase';
 import { getCafeteriaSettings, getSensorCountingEnabled, getSensorDistanceSettings, getTrafficRecordingSettings, type CafeteriaState } from '@/lib/cafeteria';
 import { getQueueEstimate, getSensorConnection, getSensorDistanceDisplay } from '@/lib/dashboard';
@@ -186,6 +188,11 @@ export function AdminDashboard() {
     } catch (error) {
       setVisitorMessage(error instanceof Error ? '저장하지 못했습니다. ' + error.message : '누적 방문을 저장하지 못했습니다. 다시 시도해 주세요.');
     } finally { setSaving(false); }
+  }
+
+  async function deleteTrafficDate(date: string) {
+    if (!db || !isAdmin || !connected) throw new Error('관리자 연결이 필요합니다.');
+    await deleteDoc(doc(db, trafficDocumentPath(date)));
   }
 
   async function recognizeMenu() {
@@ -426,6 +433,9 @@ export function AdminDashboard() {
           </Card>
         </div>
 
+
+        <TrafficTable today={getKoreanDateKey()} now={now} startsAt={state.serviceStartsAt} endsAt={state.serviceEndsAt}
+          onDeleteDate={deleteTrafficDate} deleteDisabled={saving || loading || !connected || !db} />
 
         <Card className="mt-5 gap-6 p-7 shadow-sm">
           <div><h2 className="text-xl font-black tracking-tight">날짜별 급식 메뉴</h2><p className="mt-1 text-sm text-muted-foreground">메뉴판 사진을 올리면 음식 이름을 읽어옵니다. 인식 결과를 확인·수정한 뒤 저장해 주세요.</p></div>
