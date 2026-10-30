@@ -136,3 +136,40 @@ body {
     @apply font-sans;
   }
 }
+
+/* Keep the administrator's controls calm and consistent without changing the student screen. */
+.admin-workspace {
+  --background: #f5f7fa;
+  --foreground: #1e293b;
+  --card-foreground: #1e293b;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --muted: #f1f5f9;
+  --muted-foreground: #526176;
+  --border: #dce3ec;
+  --input: #dce3ec;
+}
+
+.admin-workspace [data-slot='card'] {
+  border-radius: 18px;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 3%);
+  --tw-ring-color: #e0e6ee;
+}
+
+.admin-workspace :is(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+
+.admin-workspace :is(input:not([type='checkbox']):not([type='file']), select, textarea) {
+  border-color: var(--input);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 3%);
+}
+
+.admin-workspace :is(button, a) {
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-workspace :is(button, a) { transition: none; }
+}
