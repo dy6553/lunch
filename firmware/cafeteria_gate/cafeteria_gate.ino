@@ -334,6 +334,7 @@ int postJson(const String& json) {
     (unsigned long long)requestStart, (unsigned long long)responseAt,
     (unsigned long long)(responseAt-requestStart), reusedSocket, status);
   http.end();
+  if (status < 0) client.stop();
   if (response.indexOf("\"servingStatus\":\"CLOSED\"") >= 0) Serial.println("SITE CLOSED: connection is ready; enable serving in /admin to display the queue.");
   if (response.indexOf("\"servingStatus\":\"PAUSED\"") >= 0) Serial.println("SITE PAUSED: connection is ready; resume serving in /admin when appropriate.");
   if (status >= 200 && status < 300 && response.indexOf("\"ok\":true") < 0) return -2;
@@ -460,7 +461,11 @@ void networkTask(void*) {
       if (success(status) || (status >= 400 && status < 500 && status != 401 && status != 403 && status != 408 && status != 429)) {
         if (!success(status)) droppedEvents.fetch_add(1);
         haveRaw = false;
-      } else { if (status == 401 || status == 403) verified = false; vTaskDelay(pdMS_TO_TICKS(1000)); }
+        uploadFailures = 0;
+      } else {
+        if (status == 401 || status == 403 || ++uploadFailures >= 3) { verified = false; networkReady.store(false); uploadFailures = 0; }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+      }
       continue;
     }
     if (!haveEvent) haveEvent = xQueueReceive(eventQueue, &event, pdMS_TO_TICKS(50)) == pdTRUE;
