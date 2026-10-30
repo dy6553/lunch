@@ -101,7 +101,6 @@ export function getSensorDistanceDisplay(state: CafeteriaState, now: Date | null
 
 export function getQueueEstimate(state: CafeteriaState, now: Date | null) {
   const elapsedMinutes =
-    state.autoDecreaseEnabled &&
     state.updatedAt &&
     state.status === 'OPEN' &&
     now
