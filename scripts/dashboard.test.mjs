@@ -150,7 +150,7 @@ test('operational settings exclude live queue values and sensor telemetry', () =
   });
   assert.deepEqual(Object.keys(settings).sort(), [
     'autoDecreaseEnabled', 'sensorCountingEnabled', 'sensorDetectDistanceMm', 'serviceEndsAt',
-    'serviceRatePerMinute', 'serviceStartsAt', 'status',
+    'serviceRatePerMinute', 'serviceStartsAt', 'status', 'trafficRecordingEndsAt', 'trafficRecordingStartsAt',
   ]);
   assert.equal(settings.sensorCountingEnabled, false);
 });

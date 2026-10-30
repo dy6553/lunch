@@ -16,6 +16,8 @@ export type CafeteriaState = {
   serviceRatePerMinute: number;
   status: CafeteriaStatus;
   sensorCountingEnabled?: boolean;
+  trafficRecordingStartsAt?: string;
+  trafficRecordingEndsAt?: string;
   dailyVisitorCount?: number;
   dailyVisitorDate?: string;
   visitorTrackingStartedAt?: Date | null;
@@ -64,6 +66,16 @@ export function getCafeteriaSettings(state: CafeteriaState) {
     autoDecreaseEnabled: state.autoDecreaseEnabled,
     serviceStartsAt: state.serviceStartsAt,
     serviceEndsAt: state.serviceEndsAt,
+    trafficRecordingStartsAt: getTrafficRecordingSettings(state).startsAt,
+    trafficRecordingEndsAt: getTrafficRecordingSettings(state).endsAt,
+  };
+}
+
+export function getTrafficRecordingSettings(state: Pick<CafeteriaState, 'trafficRecordingStartsAt' | 'trafficRecordingEndsAt'>) {
+  const valid = (value: unknown): value is string => typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+  return {
+    startsAt: valid(state.trafficRecordingStartsAt) ? state.trafficRecordingStartsAt : '00:00',
+    endsAt: valid(state.trafficRecordingEndsAt) ? state.trafficRecordingEndsAt : '00:00',
   };
 }
 

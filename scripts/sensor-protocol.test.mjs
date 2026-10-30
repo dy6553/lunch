@@ -769,3 +769,25 @@ test('a failed entry transaction cannot publish a five-minute total alone', asyn
   assert.equal((await post({ ...event, sensorMode: 'single' })).status, 503);
   assert.equal([...docs.keys()].some(key => key.startsWith('cafeterias/main-traffic-')), false);
 });
+
+test('recording hours filter individual batch passages but never stop queue or daily totals', async () => {
+  const realNow = Date.now;
+  const now = Date.parse('2026-10-29T03:35:00.700Z');
+  Date.now = () => now;
+  try {
+    reset();
+    const state = docs.get('cafeterias/main').fields;
+    state.trafficRecordingStartsAt = {stringValue:'12:30'};
+    state.trafficRecordingEndsAt = {stringValue:'12:35'};
+    const frames = [...rawPassage, ...rawPassage.map(([t, mm, q]) => [t + 1380, mm, q])];
+    const batch = {...event,kind:'distance',sensorMode:'single',frames,uptimeMs:2700,occurredAtMs:now};
+    assert.equal((await post(batch)).status,200);
+    assert.equal(state.waitingCount.integerValue,'10');
+    assert.equal(state.dailyVisitorCount.integerValue,'2');
+    const counts = docs.get('cafeterias/main-traffic-2026-10-29').fields.counts.mapValue.fields;
+    assert.equal(counts.b1230.integerValue,'1');
+    assert.equal(counts.b1235,undefined);
+    await post({kind:'heartbeat',deviceId,sensorsReady:true});
+    assert.equal(counts.b1235,undefined);
+  } finally { Date.now=realNow; }
+});

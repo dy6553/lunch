@@ -8,7 +8,7 @@ import ts from 'typescript';
 const visitorsUrl = new URL('../lib/visitors.ts', import.meta.url).href;
 const cafeteriaUrl = new URL('../lib/cafeteria.ts', import.meta.url).href;
 const mockSource = `
-export { getSensorDistanceSettings, getCafeteriaSettings } from ${JSON.stringify(cafeteriaUrl)};
+export { getSensorDistanceSettings, getCafeteriaSettings, getTrafficRecordingSettings } from ${JSON.stringify(cafeteriaUrl)};
 export { adjustDailyVisitors, getTodayVisitors } from ${JSON.stringify(visitorsUrl)};
 export const jsx = (type, props) => ({ type, props });
 export const jsxs = jsx;
