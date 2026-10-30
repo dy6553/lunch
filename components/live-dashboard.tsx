@@ -338,11 +338,11 @@ export function LiveDashboard() {
                   메뉴 정보를 불러오지 못했어요. 연결을 확인해 주세요.
                 </p>
               ) : menuItems.length ? (
-                <ul className="mt-3 flex flex-wrap gap-1.5">
+                <ul className="mt-3 grid grid-cols-1 gap-1.5">
                   {menuItems.map((item, index) => (
                     <li
                       key={`${item.name}-${index}`}
-                      className="inline-flex max-w-full items-center gap-1.5 rounded-xl border border-sky-200 bg-white px-2.5 py-1.5 text-sm text-sky-950"
+                      className="flex w-full min-w-0 items-center gap-2 rounded-xl border border-sky-200 bg-white px-3 py-2 text-sm text-sky-950"
                     >
                       <span className="min-w-0 flex-1 break-keep font-bold leading-relaxed [overflow-wrap:anywhere]">
                         {item.name}
