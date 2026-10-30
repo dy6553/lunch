@@ -1,4 +1,10 @@
 export const TRAFFIC_INTERVAL_MS = 5 * 60 * 1000;
+export function isTrafficRecordingTime(timestamp: number, settings: { startsAt: string; endsAt: string }) {
+  const time = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(timestamp));
+  const { startsAt, endsAt } = settings;
+  if (startsAt === endsAt) return true;
+  return startsAt < endsAt ? time >= startsAt && time < endsAt : time >= startsAt || time < endsAt;
+}
 const dateFormat = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
 });

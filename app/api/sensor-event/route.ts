@@ -8,9 +8,9 @@ import {
   pairSensorEvent,
   validSensorMessage,
 } from '@/lib/sensor-protocol';
-import { getSensorCountingEnabled, getSensorDistanceSettings, type CafeteriaStatus } from '@/lib/cafeteria';
+import { getSensorCountingEnabled, getSensorDistanceSettings, getTrafficRecordingSettings, type CafeteriaStatus } from '@/lib/cafeteria';
 import { getNextDailyVisitors } from '@/lib/visitors';
-import { addTrafficEntry, cleanTrafficCounts, trafficDocumentPath, trafficSlot } from '@/lib/traffic';
+import { addTrafficEntry, cleanTrafficCounts, trafficDocumentPath, trafficSlot, isTrafficRecordingTime } from '@/lib/traffic';
 
 type FirestoreValue = {
   stringValue?: string;
@@ -270,6 +270,7 @@ export async function POST(request: Request) {
     }
     if (body.kind === 'heartbeat') {
       const cafeteria = await readDocument('cafeterias/main', null, token);
+      const heartbeatNow = Date.now();
       if (!cafeteria) return Response.json({ ok: false, error: 'cafeteria_not_configured' }, { status: 503 });
       const response = await fetch(`${API_ROOT}/documents:commit`, {
         method: 'POST',
@@ -279,10 +280,13 @@ export async function POST(request: Request) {
         },
         body: JSON.stringify({
           writes: [
-            ...(body.sensorsReady && getSensorCountingEnabled({
+            ...(body.sensorsReady && isTrafficRecordingTime(heartbeatNow, getTrafficRecordingSettings({
+              trafficRecordingStartsAt: stringField(cafeteria, 'trafficRecordingStartsAt'),
+              trafficRecordingEndsAt: stringField(cafeteria, 'trafficRecordingEndsAt'),
+            })) && getSensorCountingEnabled({
               status: stringField(cafeteria, 'status') as CafeteriaStatus,
               sensorCountingEnabled: cafeteria.fields?.sensorCountingEnabled?.booleanValue,
-            }) ? [trafficObservationWrite(Date.now())] : []),
+            }) ? [trafficObservationWrite(heartbeatNow)] : []),
             {
               update: {
                 name: documentName('cafeterias/main'),
@@ -455,7 +459,11 @@ export async function POST(request: Request) {
       const countDelta = measurement ? measurement.passages.length : 1;
       let visitors = { dailyVisitorCount: cafeteria.fields?.dailyVisitorCount?.integerValue === undefined ? undefined : intField(cafeteria, 'dailyVisitorCount'), dailyVisitorDate: stringField(cafeteria, 'dailyVisitorDate') };
       const captureTimes = measurement ? measurement.passages.map(at => occurredAt - (body.uptimeMs! - at)) : [occurredAt];
-      writes.push(...await trafficEntryWrites(captureTimes, transaction, token));
+      const trafficSettings = getTrafficRecordingSettings({
+        trafficRecordingStartsAt: stringField(cafeteria, 'trafficRecordingStartsAt'),
+        trafficRecordingEndsAt: stringField(cafeteria, 'trafficRecordingEndsAt'),
+      });
+      writes.push(...await trafficEntryWrites(captureTimes.filter(capture => isTrafficRecordingTime(capture, trafficSettings)), transaction, token));
       for (const capture of captureTimes) visitors = getNextDailyVisitors(visitors, new Date(capture));
       const baseCount = Math.max(0, intField(cafeteria, 'waitingCount'));
       const rate = Math.max(1, intField(cafeteria, 'serviceRatePerMinute', 30));

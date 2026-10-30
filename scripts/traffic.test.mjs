@@ -1,6 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { addTrafficEntry, cleanTrafficCounts, isTrafficDate, trafficDocumentPath, trafficRows, trafficSlot } from '../lib/traffic.ts';
+import { isTrafficRecordingTime } from '../lib/traffic.ts';
+import { getTrafficRecordingSettings } from '../lib/cafeteria.ts';
+
+test('recording hours use Korean time with inclusive start and exclusive end', () => {
+  const settings = { startsAt: '12:30', endsAt: '13:05' };
+  assert.equal(isTrafficRecordingTime(Date.parse('2026-10-29T03:29:59Z'), settings), false);
+  assert.equal(isTrafficRecordingTime(Date.parse('2026-10-29T03:30:00Z'), settings), true);
+  assert.equal(isTrafficRecordingTime(Date.parse('2026-10-29T04:05:00Z'), settings), false);
+  assert.equal(isTrafficRecordingTime(Date.parse('2026-10-29T18:00:00Z'), getTrafficRecordingSettings({})), true);
+});
+
+test('overnight recording windows and equal times are supported', () => {
+  const settings = { startsAt: '23:00', endsAt: '01:00' };
+  assert.equal(isTrafficRecordingTime(Date.parse('2026-10-29T14:30:00Z'), settings), true);
+  assert.equal(isTrafficRecordingTime(Date.parse('2026-10-29T15:30:00Z'), settings), true);
+  assert.equal(isTrafficRecordingTime(Date.parse('2026-10-29T16:00:00Z'), settings), false);
+  assert.deepEqual(getTrafficRecordingSettings({trafficRecordingStartsAt:'bad'}), {startsAt:'00:00',endsAt:'00:00'});
+});
 
 test('five-minute buckets follow Korean wall-clock boundaries and midnight', () => {
   const before = trafficSlot(Date.parse('2026-10-29T03:34:59.999Z'));
