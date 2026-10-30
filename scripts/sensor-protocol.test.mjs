@@ -203,6 +203,7 @@ let docs;
 let writes;
 let conflict;
 let rollbacks;
+let reads;
 function reset(status = 'OPEN') {
   docs = new Map([
     [
@@ -220,6 +221,7 @@ function reset(status = 'OPEN') {
     ],
   ]);
   writes = [];
+  reads = [];
   conflict = false;
   rollbacks = 0;
 }
@@ -275,7 +277,9 @@ globalThis.fetch = async (input, options = {}) => {
           parent = parent[key].mapValue.fields;
         }
         const key = keys.at(-1);
-        if (transform.maximum || transform.minimum) {
+        if (transform.increment) {
+          parent[key] = { integerValue: String(Number(parent[key]?.integerValue ?? 0) + Number(transform.increment.integerValue)) };
+        } else if (transform.maximum || transform.minimum) {
           const next = Number((transform.maximum ?? transform.minimum).integerValue);
           const old = parent[key]?.integerValue;
           const value = old === undefined ? next : transform.maximum ? Math.max(Number(old), next) : Math.min(Number(old), next);
@@ -288,6 +292,7 @@ globalThis.fetch = async (input, options = {}) => {
   }
   const path = url.pathname.split('/documents/')[1];
   assert.ok(path);
+  reads.push(path);
   return docs.has(path) ? json(docs.get(path)) : json({}, 404);
 };
 const post = (body, key = 'local-test-device-key') =>
@@ -718,6 +723,7 @@ test('five-minute totals use capture times, preserve other bins and ignore dupli
     assert.equal((await post(second)).status, 200);
     assert.equal((await (await post(second)).json()).duplicate, true);
     const stats = docs.get('cafeterias/main-traffic-2026-10-29').fields;
+    assert.equal(reads.some(path => path.startsWith('cafeterias/main-traffic-')), false, 'traffic aggregation must not delay live counts with another document read');
     assert.equal(stats.counts.mapValue.fields.b1230.integerValue, '1');
     assert.equal(stats.counts.mapValue.fields.b1235.integerValue, '1');
     const heartbeat = { kind: 'heartbeat', deviceId, sensorsReady: true };
