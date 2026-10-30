@@ -338,7 +338,7 @@ export function LiveDashboard() {
                   메뉴 정보를 불러오지 못했어요. 연결을 확인해 주세요.
                 </p>
               ) : menuItems.length ? (
-                <ul className="mt-3 grid grid-cols-1 gap-1.5">
+                <ul className="mt-3 grid grid-cols-2 gap-1.5">
                   {menuItems.map((item, index) => (
                     <li
                       key={`${item.name}-${index}`}
