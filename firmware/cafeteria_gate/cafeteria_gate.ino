@@ -24,9 +24,11 @@ constexpr uint8_t STABLE_SAMPLES = 3;
 // A brief gap between an arm and torso must not re-arm the counter.
 constexpr uint32_t CLEAR_HOLD_MS = 500;
 constexpr uint32_t HEARTBEAT_MS = 10000;
+constexpr uint32_t RAW_BATCH_MS = 240;
+constexpr uint32_t RAW_IDLE_REFRESH_MS = 2000;
 constexpr uint32_t MAX_EVENT_AGE_MS = 300000;
 constexpr char DEVICE_ID[] = "cafeteria-gate-01";
-constexpr char FIRMWARE_VERSION[] = "1.8.1";
+constexpr char FIRMWARE_VERSION[] = "1.9.0";
 WifiSetup wifiSetup;
 
 // Both supported chips can be used, including one of each in two-sensor mode.
@@ -190,6 +192,7 @@ void sampleRaw(DistanceSensor& sensor, BeamState& health) {
   static RawBatch retained{};
   static bool hasRetained = false;
   static uint64_t sentAt = 0;
+  static uint64_t activeUntil = 0;
   static uint16_t sentMm = 0;
   static uint8_t sentQuality = 255;
   uint16_t mm = 0; bool valid = false, noTarget = false;
@@ -201,15 +204,16 @@ void sampleRaw(DistanceSensor& sensor, BeamState& health) {
   batch.frames[batch.count++] = RawFrame{captured, mm, quality};
   batch.uptimeMs = captured;
   batch.occurredAtMs = clockReady() ? epochMs() : 0;
-  if (batch.count < 20 && batch.uptimeMs - batch.frames[0].at < 1000) return;
+  if (batch.count < 20 && batch.uptimeMs - batch.frames[0].at < RAW_BATCH_MS && batch.uptimeMs - sentAt < RAW_IDLE_REFRESH_MS) return;
   bool unchanged = sentQuality == quality && abs(int(sentMm) - int(mm)) <= 20;
   for (uint8_t i = 0; i < batch.count; ++i)
     if (batch.frames[i].quality != quality || abs(int(batch.frames[i].mm) - int(mm)) > 20) unchanged = false;
   // Generic telemetry compression; it never classifies people or passages.
-  if (!unchanged || batch.uptimeMs - sentAt >= 10000) {
+  if (!unchanged) activeUntil = batch.uptimeMs + 1000;
+  if (!unchanged || batch.uptimeMs <= activeUntil || batch.uptimeMs - sentAt >= RAW_IDLE_REFRESH_MS) {
     // Preserve the latest skipped measurements before a signal change. This
     // prevents compression from hiding a slow crossing near any web threshold.
-    if (!unchanged && hasRetained) {
+    if (hasRetained) {
       retained.sequence = ++sequenceNumber;
       if (xQueueSend(rawQueue, &retained, 0) != pdTRUE) droppedEvents.fetch_add(1);
     }
@@ -217,7 +221,17 @@ void sampleRaw(DistanceSensor& sensor, BeamState& health) {
     batch.sequence = ++sequenceNumber;
     if (xQueueSend(rawQueue, &batch, 0) != pdTRUE) droppedEvents.fetch_add(1);
     else { sentAt = batch.uptimeMs; sentMm = mm; sentQuality = quality; }
-  } else { retained = batch; hasRetained = true; }
+  } else {
+    // Keep a full trailing window, not just one short packet. The server needs
+    // at least 500 ms of continuous clear samples to arm before a crossing.
+    const uint8_t keep = hasRetained ? std::min<uint8_t>(retained.count, 20 - batch.count) : 0;
+    for (uint8_t i = 0; i < keep; ++i) retained.frames[i] = retained.frames[retained.count - keep + i];
+    for (uint8_t i = 0; i < batch.count; ++i) retained.frames[keep + i] = batch.frames[i];
+    retained.count = keep + batch.count;
+    retained.uptimeMs = batch.uptimeMs;
+    retained.occurredAtMs = batch.occurredAtMs;
+    hasRetained = true;
+  }
   batch = RawBatch{};
 }
 
@@ -296,10 +310,11 @@ void sampleBeam(DistanceSensor& sensor, BeamState& beam, char id) {
 }
 
 int postJson(const String& json) {
-  WiFiClientSecure client;
+  static WiFiClientSecure client;
   client.setCACert(SERVER_ROOT_CA);
   client.setHandshakeTimeout(5);
-  HTTPClient http;
+  static HTTPClient http;
+  http.setReuse(true);
   http.setConnectTimeout(3000);
   http.setTimeout(10000);
   if (!http.begin(client, SENSOR_API_URL)) return -1;

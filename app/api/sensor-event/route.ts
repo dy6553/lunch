@@ -10,7 +10,7 @@ import {
 } from '@/lib/sensor-protocol';
 import { getSensorCountingEnabled, getSensorDistanceSettings, getTrafficRecordingSettings, type CafeteriaStatus } from '@/lib/cafeteria';
 import { getNextDailyVisitors } from '@/lib/visitors';
-import { addTrafficEntry, cleanTrafficCounts, trafficDocumentPath, trafficSlot, isTrafficRecordingTime } from '@/lib/traffic';
+import { trafficDocumentPath, trafficSlot, isTrafficRecordingTime } from '@/lib/traffic';
 
 type FirestoreValue = {
   stringValue?: string;
@@ -122,30 +122,32 @@ function trafficObservationWrite(timestamp: number) {
   };
 }
 
-async function trafficEntryWrites(captureTimes: number[], transaction: string, token: string) {
+function trafficEntryWrites(captureTimes: number[]) {
   const days = new Map<string, number[]>();
   for (const capture of captureTimes) {
     const date = trafficSlot(capture).date;
     days.set(date, [...(days.get(date) ?? []), capture]);
   }
-  return Promise.all([...days].map(async ([date, captures]) => {
-    const path = trafficDocumentPath(date);
-    const previous = await readDocument(path, transaction, token);
-    const fields = previous?.fields?.counts?.mapValue?.fields ?? {};
-    let counts = cleanTrafficCounts(Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, Number(value.integerValue)])));
-    for (const capture of captures) counts = addTrafficEntry(counts, capture);
+  return [...days].map(([date, captures]) => {
+    const increments = new Map<string, number>();
+    for (const capture of captures) {
+      const key = trafficSlot(capture).key;
+      increments.set(key, (increments.get(key) ?? 0) + 1);
+    }
+    // Atomic transforms preserve other bins and avoid a read round trip before
+    // publishing the distance, queue and visitor count in the same transaction.
     return {
-      update: { name: documentName(path), fields: {
+      update: { name: documentName(trafficDocumentPath(date)), fields: {
         date: { stringValue: date }, intervalMinutes: { integerValue: '5' },
-        counts: { mapValue: { fields: Object.fromEntries(Object.entries(counts).map(([key, count]) => [key, { integerValue: String(count) }])) } },
       } },
-      updateMask: { fieldPaths: ['date', 'intervalMinutes', 'counts'] },
+      updateMask: { fieldPaths: ['date', 'intervalMinutes'] },
       updateTransforms: [
+        ...[...increments].map(([key, count]) => ({ fieldPath: `counts.${key}`, increment: { integerValue: String(count) } })),
         { fieldPath: 'firstObservedMs', minimum: { integerValue: String(Math.min(...captures)) } },
         { fieldPath: 'lastObservedMs', maximum: { integerValue: String(Math.max(...captures)) } },
       ],
     };
-  }));
+  });
 }
 
 async function readDocument(
@@ -456,7 +458,7 @@ export async function POST(request: Request) {
         trafficRecordingStartsAt: stringField(cafeteria, 'trafficRecordingStartsAt'),
         trafficRecordingEndsAt: stringField(cafeteria, 'trafficRecordingEndsAt'),
       });
-      writes.push(...await trafficEntryWrites(captureTimes.filter(capture => isTrafficRecordingTime(capture, trafficSettings)), transaction, token));
+      writes.push(...trafficEntryWrites(captureTimes.filter(capture => isTrafficRecordingTime(capture, trafficSettings))));
       for (const capture of captureTimes) visitors = getNextDailyVisitors(visitors, new Date(capture));
       const baseCount = Math.max(0, intField(cafeteria, 'waitingCount'));
       const rate = Math.max(1, intField(cafeteria, 'serviceRatePerMinute', 30));
