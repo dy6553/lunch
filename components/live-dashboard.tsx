@@ -373,7 +373,7 @@ export function LiveDashboard() {
                     rel="noopener noreferrer"
                     className="inline-flex min-h-11 items-center gap-1.5 rounded-md text-sm font-bold text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                   >
-                    10월 식단표 원본 보기{' '}
+                    {Number(today.slice(5, 7))}월 식단표 원본 보기{' '}
                     <ArrowRight aria-hidden="true" className="size-3.5" />
                   </a>
                   <p className="text-xs leading-relaxed text-muted-foreground">
