@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { collection, documentId, limit, onSnapshot, orderBy, query, startAfter } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import type { DailyMenu } from '@/lib/cafeteria';
-import { getPublishedMenu, october2026Menus } from '@/lib/published-menus';
+import { getPublishedMenu, publishedMenus } from '@/lib/published-menus';
 import { selectNextMenu } from '@/lib/next-menu';
 
 type Result = { today: string; menu: DailyMenu | null; loading: boolean; error: boolean };
@@ -15,7 +15,7 @@ export function useNextMenu(today: string) {
     let revision = 0;
     // Holiday data is shared with the admin screen and loaded separately from the student's main bundle.
     const holidays = import('@/lib/korean-holidays');
-    const published = Object.fromEntries(Object.keys(october2026Menus).filter(date => date > today)
+    const published = Object.fromEntries(Object.keys(publishedMenus).filter(date => date > today)
       .map(date => [date, getPublishedMenu(date)!]));
     async function update(overrides: Record<string, DailyMenu>, error = false) {
       const current = ++revision;

@@ -176,8 +176,34 @@ export const october2026Menus: Record<string, readonly string[]> = {
   ],
 };
 
+
+// Transcribed from the supplied November 2026 calendar. Blank dates are not meal dates.
+export const november2026Menus: Record<string, readonly string[]> = {
+  '2026-11-02': ['김밥볶음밥', '시금치된장국', '연두부&오리엔탈소스', '단무지'],
+  '2026-11-03': ['옥수수알밥', '부대찌개&사리', '야채계란말이', '참치마요&골라먹는김'],
+  '2026-11-04': ['쌀밥', '잔치국수', '배추겉절이', '반마리치킨', '매콤두부조림'],
+  '2026-11-05': ['찰현미밥', '한우미역국', '참나물겉절이', '순대막창불고기'],
+  '2026-11-06': ['찰흑미밥', '닭곰탕&당면', '오이부추무침', '김치전', '직화떡갈비&소스'],
+  '2026-11-09': ['찰보리밥', '게살연두부국', '철판떼기주꾸미볶음', '고르곤졸라피자'],
+  '2026-11-10': ['기장밥', '황태무국', '*야채숙쌈', '바싹제육볶음', '독일식감자전'],
+  '2026-11-11': ['고깃집마무리볶음밥', '맑은콩나물국', '*흑임자유자샐러드', '순살후라이드&소스'],
+  '2026-11-12': ['검정콩밥', '고추장찌개', '브로치니샐러드', '매실무말랭이'],
+  '2026-11-13': ['차조밥', '두부된장국', '쫄면야채무침', '쌈&장아찌', '한입소금구이'],
+  '2026-11-16': ['미니유부비빔밥', '어묵가락국수', '일미볶음', '불고기타코'],
+  '2026-11-17': ['오므라이스', '수능대박초코찹쌀떡', '유부장국', '배추겉절이'],
+  '2026-11-20': ['검정콩밥', '돼지등뼈감자탕', '미역줄기볶음', '해물동그랑땡&케첩'],
+  '2026-11-23': ['날치알밥', '가쓰오장국', '버터갈릭감자튀김'],
+  '2026-11-24': ['찰흑미밥', '물만두국', 'Non-GMO콥샐러드', '매운오리불고기', 'Non-GMO옥수수전'],
+  '2026-11-25': ['카레라이스', '미소된장국', '브로콜리&초장'],
+  '2026-11-26': ['옥수수알밥', '양송이브로콜리스프', '치즈토마토샐러드', '수제치킨까스'],
+  '2026-11-27': ['차조밥', '순두부된장찌개', '모듬쌈&쌈장', '아삭고추된장무침', '양파부추초절임'],
+  '2026-11-30': ['산채비빔밥&고추장', '감자계란국', '애호박전', '배추김치', '불고기후랑크베이크'],
+};
+
+export const publishedMenus = { ...october2026Menus, ...november2026Menus };
+
 export function getPublishedMenu(date: string): DailyMenu | null {
-  const items = october2026Menus[date];
+  const items = publishedMenus[date];
   if (!Array.isArray(items)) return null;
   return {
     date,
@@ -190,5 +216,6 @@ export function getPublishedMenu(date: string): DailyMenu | null {
 }
 
 export function getPublishedMenuSource(date: string) {
-  return /^2026-10-\d{2}$/.test(date) ? '/menus/2026-10.jpg' : null;
+  const month = date.slice(0, 7);
+  return ['2026-10', '2026-11'].includes(month) && /^2026-(10|11)-\d{2}$/.test(date) ? `/menus/${month}.jpg` : null;
 }
