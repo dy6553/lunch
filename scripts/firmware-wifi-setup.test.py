@@ -5,7 +5,7 @@ The ESP32 cross-compile is a separate check; this test needs only g++.
 """
 
 from pathlib import Path
-import subprocess
+import subprocess,os,shlex
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -230,6 +230,6 @@ with tempfile.TemporaryDirectory(prefix="lunch-wifi-test-") as directory:
     subprocess.run([
         "g++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
         "-I", str(folder), "-I", str(ROOT / "firmware/cafeteria_gate"),
-        str(folder / "test.cpp"), "-o", str(folder / "test"),
+        str(folder / "test.cpp"), "-o", str(folder / ("test.exe" if os.name=="nt" else "test")),
     ], check=True)
     subprocess.run([str(folder / "test")], check=True)
